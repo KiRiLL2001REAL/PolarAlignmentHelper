@@ -1,0 +1,6 @@
+[submodule "PolarAlignmentHelper/3rdparty/ToupCamSDK"]
+	path = PolarAlignmentHelper/3rdparty/ToupCamSDK
+	url = https://github.com/KiRiLL2001REAL/ToupCamSDK.git
+[submodule "PolarAlignmentHelper/3rdparty/imgui"]
+	path = PolarAlignmentHelper/3rdparty/imgui
+	url = https://github.com/KiRiLL2001REAL/imgui.git
