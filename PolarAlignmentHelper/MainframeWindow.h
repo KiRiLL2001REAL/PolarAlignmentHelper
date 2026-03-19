@@ -34,9 +34,14 @@ protected:
     ToupTekCameraManager::RangeDTO exposureTimeRangeDTO;
     ToupTekCameraManager::RangeDTO exposureGainRangeDTO;
 
-    GLuint drawingTexture;
-    ToupTekCameraManager::FrameHeader header;
-    BYTE* grabbedImageBuffer;
+    GLuint displayGlTexture;
+    volatile bool                     imageProcessing;
+    ToupTekCameraManager::FrameHeader imageHeader;
+    BYTE*                             imageBuffer;
+    size_t                            rgbWritePage;
+    mutable std::shared_mutex         rgbMutex[2];
+    ToupTekCameraManager::FrameHeader rgbHeader[2];
+    BYTE*                             rgbBuffer[2];
 
     void drawLeftChild();
     void drawRightChild();

@@ -3,6 +3,8 @@
 #include <cstring>
 #include <cstdio>
 
+#include "Debayer.h"
+
 ToupTekCameraManager::ToupTekCameraManager(ThreadWorker* worker) :
     m_devicesCount(0),
     m_devicesMutex(),
@@ -518,6 +520,30 @@ LRESULT __stdcall ToupTekCameraManager::WndProcHandler(
                 unsigned height = info.v3.height;
                 bool isRaw = (optionRaw != 0);
 
+                unsigned bpp2;
+                unsigned fourCC = 0;
+                static constexpr unsigned _rggb = MAKEFOURCC('R', 'G', 'G', 'B');
+                static constexpr unsigned _bggr = MAKEFOURCC('B', 'G', 'G', 'R');
+                static constexpr unsigned _grbg = MAKEFOURCC('G', 'R', 'B', 'G');
+                static constexpr unsigned _gbrg = MAKEFOURCC('G', 'B', 'R', 'G');
+                //printf("RGGB: %u    BGGR: %u    GRBG: %u    GBRG: %u\n", _rggb, _bggr, _grbg, _gbrg);
+                Toupcam_get_RawFormat(m_handle, &fourCC, &bpp2);
+                if (bpp != bpp2) {
+                    printf("[W] ToupTekCameraManager::WndProcHandler: {TOUPCAM_EVENT_IMAGE} Check BPP.\n");
+                }
+
+                // TODO Ёто, веро€тно, костыль. Ќужно думать как обойти
+                int upsideDown = 0;
+                Toupcam_get_Option(m_handle, TOUPCAM_OPTION_UPSIDE_DOWN, &upsideDown);
+                if (upsideDown) {
+                    switch (fourCC) {
+                    case _rggb: fourCC = _bggr; break;
+                    case _bggr: fourCC = _rggb; break;
+                    case _grbg: fourCC = _gbrg; break;
+                    case _gbrg: fourCC = _grbg; break;
+                    }
+                }
+                
                 FrameHeader& header = m_pullingBitmapInfo[m_pullingBitmapWritePage];
                 BYTE*& data = m_pullingBitmapData[m_pullingBitmapWritePage];
                 if (header.isRaw != isRaw || header.bpp != bpp || header.width != width || header.height != height) {
@@ -529,6 +555,7 @@ LRESULT __stdcall ToupTekCameraManager::WndProcHandler(
 
                 header.width = width;
                 header.height = height;
+                header.fourCC = fourCC;
                 header.bpp = bpp;
                 header.isRaw = isRaw;
                 if (!data) {
@@ -538,6 +565,13 @@ LRESULT __stdcall ToupTekCameraManager::WndProcHandler(
                 }
 
                 Toupcam_PullImageV4(m_handle, data, 0, bpp, 0, NULL);
+                /*{
+                    unsigned p11 = data[0];
+                    unsigned p12 = data[1];
+                    unsigned p21 = data[width];
+                    unsigned p22 = data[width+1];
+                    int g = 4;
+                }*/
             }
 
             m_pullingBitmapWritePage = 1 - m_pullingBitmapWritePage;
@@ -585,6 +619,7 @@ void ToupTekCameraManager::startDevicePulling(
         printf("[W] ToupTekCameraManager::startDevicePulling: Using HARDCODED Toupcam_put_AutoExpoEnable=0.\n");
     }
 
+    Toupcam_put_Option(m_handle, TOUPCAM_OPTION_DEMOSAIC, 0);
     hr = Toupcam_put_Option(m_handle, TOUPCAM_OPTION_RAW, 1);
     if (FAILED(hr)) {
         printf("[E] ToupTekCameraManager::startDevicePulling: Setting TOUPCAM_OPTION_RAW failed (code: %ld).\n", hr);
@@ -607,10 +642,15 @@ void ToupTekCameraManager::startDevicePulling(
 bool ToupTekCameraManager::grabImageData(FrameHeader& header, BYTE*& dst) const
 {
     std::shared_lock lock(m_pullingBitmapMutex[1 - m_pullingBitmapWritePage]);
+    static size_t prev_page = 1000;
     size_t page = 1 - m_pullingBitmapWritePage;
 
     if (!m_pullingBitmapData[page])
         return false;
+
+    if (page == prev_page)
+        return false;
+    prev_page = page;
 
     if (!dst || header.buffer_size != m_pullingBitmapInfo[page].buffer_size) {
         if (dst) {
@@ -621,6 +661,60 @@ bool ToupTekCameraManager::grabImageData(FrameHeader& header, BYTE*& dst) const
     }
     header = m_pullingBitmapInfo[page];
     memcpy(dst, m_pullingBitmapData[page], header.buffer_size);
+
+    return true;
+}
+
+bool ToupTekCameraManager::debayerRawImage(
+    _In_ FrameHeader& headerSrc,
+    _In_ BYTE*& dataSrc,
+    _Out_ FrameHeader& headerDst,
+    _Out_ BYTE*& dataDst
+) {
+    if (!headerSrc.isRaw)
+        return false;
+
+    int width = headerSrc.width;
+    int height = headerSrc.height;
+
+    if (width <= 0 || height <= 0) {
+        printf("[E] ToupTekCameraManager::debayerRawImage: Check image W&H.\n");
+        return false;
+    }
+
+    BYTE* rgb;
+    size_t alloc_size = 0;
+    if (headerSrc.bpp == 8)
+        alloc_size = size_t(width) * 3 * height;
+    else if (headerSrc.bpp == 16)
+        alloc_size = size_t(width) * 3 * 2 * height;
+    else {
+        printf("[E] ToupTekCameraManager::debayerRawImage: Unsupported bpp %u.\n", headerSrc.bpp);
+        return false;
+    }
+
+    rgb = (BYTE*)malloc(alloc_size);
+    if (!rgb) {
+        printf("[E] ToupTekCameraManager::debayerRawImage: Can't malloc %llu bytes.\n", alloc_size);
+        return false;
+    }
+    
+    if (headerSrc.bpp == 8)
+        Debayer::demosaic<uint8_t>((uint8_t*)dataSrc, width, height, headerSrc.fourCC, (uint8_t*)rgb);
+    else
+        Debayer::demosaic<uint16_t>((uint16_t*)dataSrc, width, height, headerSrc.fourCC, (uint16_t*)rgb);
+
+    headerDst.width = headerSrc.width;
+    headerDst.height = headerSrc.height;
+    headerDst.fourCC = 0;
+    headerDst.buffer_size = alloc_size;
+    headerDst.bpp = headerSrc.bpp == 8 ? 24 : 48;
+    headerDst.isRaw = false;
+    if (dataDst) {
+        free(dataDst);
+        dataDst = NULL;
+    }
+    dataDst = rgb;
 
     return true;
 }

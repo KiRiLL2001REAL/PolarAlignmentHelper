@@ -113,6 +113,7 @@
     <ClInclude Include="3rdparty\imgui\imstb_textedit.h" />
     <ClInclude Include="3rdparty\imgui\imstb_truetype.h" />
     <ClInclude Include="3rdparty\ToupCamSDK\inc\toupcam.h" />
+    <ClInclude Include="Debayer.h" />
     <ClInclude Include="ImGuiCustom.h" />
     <ClInclude Include="MainframeWindow.h" />
     <ClInclude Include="ThreadWorker.h" />

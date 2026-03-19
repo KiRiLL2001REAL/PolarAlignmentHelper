@@ -41,6 +41,7 @@ public:
     struct FrameHeader {
         unsigned width;
         unsigned height;
+        unsigned fourCC;
         size_t buffer_size;
         unsigned short bpp;
         bool isRaw;
@@ -212,6 +213,12 @@ public:
     void startDevicePulling(HWND hWnd);
     
     bool grabImageData(FrameHeader& header, BYTE*& dst) const;
+
+    static bool debayerRawImage(
+        _In_ FrameHeader& headerSrc,
+        _In_ BYTE*& dataSrc,
+        _Out_ FrameHeader& headerDst,
+        _Out_ BYTE*& dataDst);
 
 protected:
     int                        m_devicesCount;
