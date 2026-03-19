@@ -18,6 +18,16 @@
 #include <GL/gl.h>
 #include <tchar.h>
 
+#include <iostream>
+#include <cstdio>
+#include <vector>
+#include "MainframeWindow.h"
+
+
+
+const wchar_t* APPLICATION_TITLE = L"Polar Alignment Helper (Toupcamera)";
+MainframeWindow* g_pWindow;
+
 // Data stored per platform window
 struct WGL_WindowData { HDC hDC; };
 
@@ -27,11 +37,13 @@ static WGL_WindowData   g_MainWindow;
 static int              g_Width;
 static int              g_Height;
 
+
 // Forward declarations of helper functions
 bool CreateDeviceWGL(HWND hWnd, WGL_WindowData* data);
 void CleanupDeviceWGL(HWND hWnd, WGL_WindowData* data);
-void ResetDeviceWGL();
+//void ResetDeviceWGL();
 LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
 
 // Main code
 int main(int, char**)
@@ -41,9 +53,9 @@ int main(int, char**)
     float main_scale = ImGui_ImplWin32_GetDpiScaleForMonitor(::MonitorFromPoint(POINT{ 0, 0 }, MONITOR_DEFAULTTOPRIMARY));
 
     // Create application window
-    WNDCLASSEXW wc = { sizeof(wc), CS_OWNDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"ImGui Example", nullptr };
+    WNDCLASSEXW wc = { sizeof(wc), CS_OWNDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, APPLICATION_TITLE, nullptr };
     ::RegisterClassExW(&wc);
-    HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"Dear ImGui Win32+OpenGL3 Example", WS_OVERLAPPEDWINDOW, 100, 100, (int)(1280 * main_scale), (int)(800 * main_scale), nullptr, nullptr, wc.hInstance, nullptr);
+    HWND hwnd = ::CreateWindowW(wc.lpszClassName, APPLICATION_TITLE, WS_OVERLAPPEDWINDOW, 100, 100, (int)(1280 * main_scale), (int)(800 * main_scale), nullptr, nullptr, wc.hInstance, nullptr);
 
     // Initialize OpenGL
     if (!CreateDeviceWGL(hwnd, &g_MainWindow))
@@ -96,14 +108,19 @@ int main(int, char**)
     //io.Fonts->AddFontFromFileTTF("../../misc/fonts/Cousine-Regular.ttf");
     //ImFont* font = io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\ArialUni.ttf");
     //IM_ASSERT(font != nullptr);
+    io.Fonts->AddFontFromFileTTF("fonts\\Lato\\Lato-Regular.ttf"   , 18.0f, NULL, io.Fonts->GetGlyphRangesCyrillic());
+    io.Fonts->AddFontFromFileTTF("fonts\\Lato\\Lato-Italic.ttf"    , 18.0f, NULL, io.Fonts->GetGlyphRangesCyrillic());
+    io.Fonts->AddFontFromFileTTF("fonts\\Lato\\Lato-Bold.ttf"      , 18.0f, NULL, io.Fonts->GetGlyphRangesCyrillic());
+    io.Fonts->AddFontFromFileTTF("fonts\\Lato\\Lato-BoldItalic.ttf", 18.0f, NULL, io.Fonts->GetGlyphRangesCyrillic());
 
     // Our state
-    bool show_demo_window = true;
-    bool show_another_window = false;
     ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 
     // Main loop
     bool done = false;
+
+    g_pWindow = new MainframeWindow(hwnd);
+
     while (!done)
     {
         // Poll and handle messages (inputs, window resize, etc.)
@@ -130,8 +147,7 @@ int main(int, char**)
         ImGui::NewFrame();
 
         // 1. Show the big demo window (Most of the sample code is in ImGui::ShowDemoWindow()! You can browse its code to learn more about Dear ImGui!).
-        if (show_demo_window)
-            ImGui::ShowDemoWindow(&show_demo_window);
+        ImGui::ShowDemoWindow();
 
         // 2. Show a simple window that we create ourselves. We use a Begin/End pair to create a named window.
         {
@@ -139,32 +155,12 @@ int main(int, char**)
             static int counter = 0;
 
             ImGui::Begin("Hello, world!");                          // Create a window called "Hello, world!" and append into it.
-
-            ImGui::Text("This is some useful text.");               // Display some text (you can use a format strings too)
-            ImGui::Checkbox("Demo Window", &show_demo_window);      // Edit bools storing our window open/close state
-            ImGui::Checkbox("Another Window", &show_another_window);
-
-            ImGui::SliderFloat("float", &f, 0.0f, 1.0f);            // Edit 1 float using a slider from 0.0f to 1.0f
-            ImGui::ColorEdit3("clear color", (float*)&clear_color); // Edit 3 floats representing a color
-
-            if (ImGui::Button("Button"))                            // Buttons return true when clicked (most widgets return true when edited/activated)
-                counter++;
-            ImGui::SameLine();
-            ImGui::Text("counter = %d", counter);
-
             ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
             ImGui::End();
         }
-
-        // 3. Show another simple window.
-        if (show_another_window)
-        {
-            ImGui::Begin("Another Window", &show_another_window);   // Pass a pointer to our bool variable (the window will have a closing button that will clear the bool when clicked)
-            ImGui::Text("Hello from another window!");
-            if (ImGui::Button("Close Me"))
-                show_another_window = false;
-            ImGui::End();
-        }
+        
+        if (g_pWindow)
+            g_pWindow->draw("Window");
 
         // Rendering
         ImGui::Render();
@@ -175,6 +171,12 @@ int main(int, char**)
 
         // Present
         ::SwapBuffers(g_MainWindow.hDC);
+    }
+
+
+    if (g_pWindow) {
+        delete g_pWindow;
+        g_pWindow = NULL;
     }
 
     ImGui_ImplOpenGL3_Shutdown();
@@ -188,6 +190,7 @@ int main(int, char**)
 
     return 0;
 }
+
 
 // Helper functions
 bool CreateDeviceWGL(HWND hWnd, WGL_WindowData* data)
@@ -231,6 +234,9 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
         return true;
+    if (g_pWindow)
+        g_pWindow->WndProcHandler(hWnd, msg, wParam, lParam);
+    
 
     switch (msg)
     {
@@ -249,5 +255,6 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         ::PostQuitMessage(0);
         return 0;
     }
+    
     return ::DefWindowProcW(hWnd, msg, wParam, lParam);
 }

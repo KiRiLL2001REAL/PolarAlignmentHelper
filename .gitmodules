@@ -4,3 +4,6 @@
 [submodule "PolarAlignmentHelper/3rdparty/imgui"]
 	path = PolarAlignmentHelper/3rdparty/imgui
 	url = https://github.com/KiRiLL2001REAL/imgui.git
+[submodule "PolarAlignmentHelper/3rdparty/utfcpp"]
+	path = PolarAlignmentHelper/3rdparty/utfcpp
+	url = https://github.com/KiRiLL2001REAL/utfcpp.git
