@@ -3,6 +3,7 @@
 #include "Utility.h"
 #include "ImGuiCustom.h"
 
+
 const ImVec4 MainframeWindow::COLOR_CHILD_WINDOW(0.06f, 0.06f, 0.06f, 0.94f);
 
 
@@ -19,6 +20,14 @@ static constexpr char LC_LEFT_COMBO_PIXFMT_PREVIEW_DEFAULT[]      = u8"Отключено
 static constexpr char LC_LEFT_COMBO_PIXFMT_LABEL[]                = u8"Формат пикселя";
 static constexpr char LC_LEFT_SLIDER_EXPTIME_LABEL[]              = u8"Время выдержки";
 static constexpr char LC_LEFT_SLIDER_EXPGAIN_LABEL[]              = u8"Усиление";
+static constexpr char LC_LEFT_SECTION_POLAR_ALIGNMENT[]           = u8"Установка полярной оси";
+static constexpr char LC_LEFT_LABEL_SERVER_STATUS[]               = u8"Статус локального сервера:";
+static constexpr char LC_LEFT_LABEL_SERVER_STATUS_ONLINE[]        = u8"Соединение установлено";
+static constexpr char LC_LEFT_LABEL_SERVER_STATUS_OFFLINE[]       = u8"Соединения нет";
+static constexpr char LC_LEFT_BTN_ADD_MOUNT_POINT[]               = u8"Добавить точку";
+static constexpr char LC_LEFT_BTN_SET_POINT_TOOLTIP[]             = u8"Наведите телескоп на область неба, наиболее близкую к полярной звезде.\nУчтите, что в будущем вам нужно будет поворачивать RA по часовой стрелке.\nДобавьте минимум 3 точки.";
+static constexpr char LC_LEFT_MOUNT_POINTS_LABEL[]                = u8"Координаты для определения смещения RA монтировки";
+static constexpr char LC_LEFT_BTN_CLEAR_MOUNT_POINTS[]            = u8"Очистить\nточки";
 
 
 MainframeWindow::MainframeWindow(HWND hWnd):
@@ -34,9 +43,13 @@ MainframeWindow::MainframeWindow(HWND hWnd):
     exposureGainRangeDTO(),
 
     imageProcessing(false),
+    imageMutex(),
     displayGlTexture(0),
     imageBuffer(NULL),
-    rgbWritePage(0)
+    rgbWritePage(0),
+
+    skySolverConnector(),
+    RADecDTO(RA_DEC_TABLE_MAX_SIZE)
 {
     memset(&imageHeader, 0, sizeof(imageHeader));
     memset(&rgbHeader[0], 0, sizeof(rgbHeader[0]));
@@ -46,6 +59,9 @@ MainframeWindow::MainframeWindow(HWND hWnd):
     glBindTexture(GL_TEXTURE_2D, displayGlTexture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    skySolverConnector.InitWinsock();
+    resetRADecDTO();
 
     worker.start();
 }
@@ -65,24 +81,22 @@ MainframeWindow::~MainframeWindow()
         displayGlTexture = 0;
     }
 
+    while (imageProcessing) std::this_thread::yield();
+
     memset(&imageHeader, 0, sizeof(imageHeader));
     if (imageBuffer) {
         free(imageBuffer);
         imageBuffer = NULL;
     }
-    memset(&rgbHeader[0], 0, sizeof(rgbHeader[0]));
-    if (rgbBuffer[0]) {
-        free(rgbBuffer[0]);
-        rgbBuffer[0] = NULL;
-    }
-    memset(&rgbHeader[1], 0, sizeof(rgbHeader[1]));
-    if (rgbBuffer[1]) {
-        free(rgbBuffer[1]);
-        rgbBuffer[1] = NULL;
-    }
+
+    invalidateRGBImage(0);
+    invalidateRGBImage(1);
+
+    skySolverConnector.disconnect();
+    skySolverConnector.CleanupWinsock();
 }
 
-void MainframeWindow::draw(
+void MainframeWindow::draw_n_check_connection(
     const std::string& title
 ) {
     static bool first_entry = true;
@@ -105,6 +119,44 @@ void MainframeWindow::draw(
 
         if (manager.isDeviceOpened() && !manager.isDeviceRunning())
             manager.startDevicePulling(hWnd);
+
+        // Проверка доступности сервера
+        {
+            using namespace std::chrono;
+
+            static steady_clock::time_point last_check = steady_clock::now() - milliseconds(SERVER_CHECKOUT_INTERVAL_MS);
+            static bool sky_solver_connector_checking = false;
+            
+            auto elapsed = duration_cast<milliseconds>(steady_clock::now() - last_check).count();
+            
+            if (!skySolverConnector.isConnected()) {
+                if (!sky_solver_connector_checking && elapsed >= SERVER_CHECKOUT_INTERVAL_MS) {
+                    sky_solver_connector_checking = true;
+                    std::thread thr([&]()
+                        {
+                            skySolverConnector.connect("127.0.0.1", 65432);
+                            sky_solver_connector_checking = false;
+                            last_check = steady_clock::now();
+                        }
+                    );
+                    thr.detach();
+                }
+            }
+            else {
+                if (!sky_solver_connector_checking && elapsed >= SERVER_CHECKOUT_INTERVAL_MS) {
+                    sky_solver_connector_checking = true;
+                    std::thread thr([&]()
+                        {
+                            skySolverConnector.ping();
+                            sky_solver_connector_checking = false;
+                            last_check = steady_clock::now();
+                        }
+                    );
+                    thr.detach();
+                }
+            }
+        }
+        
     }
     ImGui::End();
 }
@@ -198,13 +250,19 @@ void MainframeWindow::drawLeftChild()
             static ImVec2 _FramePadding = ImGui::GetStyle().FramePadding;
             float width = max(ImGui::CalcTextSize(LC_LEFT_BTN_TOGGLE_DEV_DISCONNECT).x, ImGui::CalcTextSize(LC_LEFT_BTN_TOGGLE_DEV_CONNECT).x) + _FramePadding.x * 2.f;
             if (ImGui::Button(buffer, ImVec2(width, 0))) {
-                if (manager.isDeviceOpened()) manager.closeDevice();
-                else                          manager.openDevice(devicesDTO[item_device_idx].id);
+                if (manager.isDeviceOpened()) {
+                    manager.closeDevice();
+                    invalidateRGBImage(0);
+                    invalidateRGBImage(1);
+                }
+                else
+                    manager.openDevice(devicesDTO[item_device_idx].id);
             }
 
             ImGui::EndDisabled();  // # ImGui::BeginDisabled(!selected_device_valid);
         }
 
+        ImGui::Dummy(ImVec2(0, 8));
         ImGui::SeparatorText(LC_LEFT_SECTION_CAPTURE_SETTINGS);
 
         ImGui::BeginDisabled(!(selected_device_valid && manager.isDeviceOpened()));
@@ -326,7 +384,151 @@ void MainframeWindow::drawLeftChild()
             }
         }
         ImGui::EndDisabled();  // # ImGui::BeginDisabled(!(selected_device_valid && manager.isDeviceOpened()));
-        ImGui::Dummy(ImVec2(0, 32));
+        
+        ImGui::Dummy(ImVec2(0, 8));
+        ImGui::SeparatorText(LC_LEFT_SECTION_POLAR_ALIGNMENT);
+
+        // 7 строка - статус сервера
+        ImGui::Dummy(ImVec2(0, 8));
+        {
+            ImGui::Text(LC_LEFT_LABEL_SERVER_STATUS);
+
+            static const ImVec4 COLOR_RED = ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
+            static const ImVec4 COLOR_GREEN = ImVec4(0.0f, 1.0f, 0.0f, 1.0f);
+            
+            const ImVec4 color = skySolverConnector.isConnected() ? ImColor(COLOR_GREEN) : ImColor(COLOR_RED);
+            const char* text = skySolverConnector.isConnected() ? LC_LEFT_LABEL_SERVER_STATUS_ONLINE : LC_LEFT_LABEL_SERVER_STATUS_OFFLINE;
+
+            ImGui::SameLine();
+            ImGui::TextColored(color, text);
+        }
+        ImGui::Dummy(ImVec2(0, 16));
+        // 8 строка - кнопки, связанные с астрономическими расчетами
+        ImGui::BeginDisabled(!skySolverConnector.isConnected() || NULL == rgbBuffer[1 - rgbWritePage]);
+        {
+            auto& mountPtsDTO = skySolverConnector.getMountPointsDTO();
+
+            {
+                static bool savingToDisk = false;
+                ImGui::BeginDisabled(
+                    savingToDisk || skySolverConnector.isSolveRunning() ||
+                    mountPtsDTO.size() >= RA_DEC_TABLE_MAX_SIZE ||
+                    skySolverConnector.isMountPointPending() && mountPtsDTO.size() >= RA_DEC_TABLE_MAX_SIZE - 1
+                );
+                {
+                    char buffer[64];
+                    snprintf(buffer, sizeof(buffer), u8"%s##btnAddPoint", LC_LEFT_BTN_ADD_MOUNT_POINT);
+                    if (ImGui::Button(buffer, ImVec2(-1, 0))) {
+                        if (!savingToDisk) {
+                            size_t page = 1 - rgbWritePage;
+                            std::shared_lock lock(rgbMutex[page]);
+                            if (!skySolverConnector.isSolveRunning() && rgbHeader[page].width && rgbHeader[page].height && !rgbHeader[page].isRaw) {
+                                savingToDisk = true;
+
+                                static ToupTekCameraManager::FrameHeader rgbHeaderCopy;
+                                static BYTE* rgbBufferCopy;
+
+                                rgbHeaderCopy = rgbHeader[page];
+                                rgbBufferCopy = (BYTE*)malloc(rgbHeaderCopy.buffer_size);
+                                memcpy(rgbBufferCopy, rgbBuffer[page], rgbHeaderCopy.buffer_size);
+                                printf("allocate\n");
+                                std::thread thr([&]()
+                                    {
+                                        Utility::writeRGBJpeg(rgbBufferCopy, rgbHeaderCopy.width, rgbHeaderCopy.height, 100, "img/pah_img.jpg");
+
+                                        memset(&rgbHeaderCopy, 0, sizeof(rgbHeaderCopy));
+                                        free(rgbBufferCopy);
+                                        printf("free\n");
+                                        savingToDisk = false;
+
+                                        skySolverConnector.addMountPoint("img/pah_img.jpg", 60);
+                                    }
+                                );
+                                thr.detach();
+                            }
+                        }
+                    }
+                    ImGui::SetItemTooltip(LC_LEFT_BTN_SET_POINT_TOOLTIP);
+                }
+                ImGui::EndDisabled();  // # skySolverConnector.isSolveRunning() || mountPtsDTO.size() >= RA_DEC_TABLE_MAX_SIZE || skySolverConnector.isMountPointPending() && mountPtsDTO.size() >= RA_DEC_TABLE_MAX_SIZE - 1
+            }
+            // 9 строка - таблица с точками
+            {
+                ImGui::Text(LC_LEFT_MOUNT_POINTS_LABEL);
+
+                static ImGuiTableFlags grid_table_flags = ImGuiTableFlags_NoPadOuterX | ImGuiTableFlags_SizingFixedFit;
+                if (ImGui::BeginTable("##gridTable", 2, grid_table_flags))
+                {  // gridTable
+                    ImGui::TableSetupColumn("table", ImGuiTableColumnFlags_WidthStretch);
+                    ImGui::TableSetupColumn("btn", ImGuiTableColumnFlags_WidthFixed, -1);
+                    ImGui::TableNextRow();  // gridTable
+                    ImGui::TableSetColumnIndex(0);  // gridTable
+                    {
+                        static ImGuiTableFlags flags =
+                            ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg |
+                            ImGuiTableFlags_Borders | ImGuiTableFlags_Resizable;
+
+                        if (ImGui::BeginTable("table", 3, flags)) {
+                            ImGui::TableSetupColumn("n", ImGuiTableColumnFlags_WidthFixed);
+                            ImGui::TableSetupColumn("RA", ImGuiTableColumnFlags_WidthStretch);
+                            ImGui::TableSetupColumn("Dec", ImGuiTableColumnFlags_WidthStretch);
+                            ImGui::TableHeadersRow();
+                            size_t rows_drawn = 0;
+                            for (size_t i = 0; i < mountPtsDTO.size(); i++) {
+                                rows_drawn++;
+                                ImGui::TableNextRow();
+
+                                std::string row_n_str = std::to_string(rows_drawn);
+                                std::string ra_str = std::to_string(mountPtsDTO[i].ra);
+                                std::string dec_str = std::to_string(mountPtsDTO[i].dec);
+
+                                ImGui::TableSetColumnIndex(0);
+                                ImGui::Text(row_n_str.c_str());
+                                ImGui::TableSetColumnIndex(1);
+                                ImGui::Text(ra_str.c_str());
+                                ImGui::TableSetColumnIndex(2);
+                                ImGui::Text(dec_str.c_str());
+
+                            }
+                            static const char* spinner[4] = { " | ", " / ", "---", " \\ " };
+                            if (skySolverConnector.isMountPointPending()) {
+                                rows_drawn++;
+                                ImGui::TableNextRow();
+
+                                std::string row_n_str = std::to_string(rows_drawn);
+                                ImGui::TableSetColumnIndex(0);
+                                ImGui::Text(row_n_str.c_str());
+                                ImGui::TableSetColumnIndex(1);
+                                ImGui::Text(spinner[size_t(ImGui::GetTime() * 4) & 3]);
+                                ImGui::TableSetColumnIndex(2);
+                                ImGui::Text(spinner[size_t(ImGui::GetTime() * 4) & 3]);
+                            }
+                            for (size_t i = rows_drawn; i < RA_DEC_TABLE_MAX_SIZE; i++) {
+                                ImGui::TableNextRow();
+                                ImGui::TableSetColumnIndex(0);
+                                ImGui::Text(" ");
+                                ImGui::TableSetColumnIndex(1);
+                                ImGui::Text(" ");
+                                ImGui::TableSetColumnIndex(2);
+                                ImGui::Text(" ");
+                            }
+
+                            ImGui::EndTable();
+                        }
+                    }
+                    ImGui::TableSetColumnIndex(1);  // gridTable
+                    {
+                        char buffer[64];
+                        snprintf(buffer, sizeof(buffer), "%s##btnClearPoints", LC_LEFT_BTN_CLEAR_MOUNT_POINTS);
+                        if (ImGui::Button(buffer)) {
+                            skySolverConnector.clearMountPoints();
+                        }
+                    }
+                    ImGui::EndTable();  // gridTable
+                }
+            }
+        }
+        ImGui::EndDisabled();  // # !skySolverConnector.isConnected() || NULL == rgbBuffer[1 - rgbWritePage]
 
         ImGui::EndChild();
     }
@@ -341,9 +543,11 @@ void MainframeWindow::drawRightChild()
 
     if (ImGui::BeginChild("##viewport", ImVec2(0, ImGui::GetContentRegionAvail().y), flags)) {
 
-        // Хаваем картинку и выполняем debayer
+        // Хаваем картинку и [выполняем debayer в отдельном потоке]
         if (manager.grabImageData(imageHeader, imageBuffer)) {
             if (!imageHeader.isRaw) {
+                printf("[W] MainframeWindow::drawRightChild: not tested branch \"if (!imageHeader.isRaw) {\".\n");
+                std::unique_lock lock(imageMutex);
                 memcpy(&rgbHeader[rgbWritePage], &imageHeader, sizeof(imageHeader));
                 memcpy(&rgbBuffer[rgbWritePage], &imageBuffer, imageHeader.buffer_size);
                 rgbWritePage = 1 - rgbWritePage;
@@ -353,7 +557,8 @@ void MainframeWindow::drawRightChild()
                     imageProcessing = true;
                     std::thread thr([&]()
                         {
-                            std::unique_lock lock(rgbMutex[rgbWritePage]);
+                            std::shared_lock lock(imageMutex);
+                            std::unique_lock lock2(rgbMutex[rgbWritePage]);
                             auto start = std::chrono::high_resolution_clock::now();
                             manager.debayerRawImage(
                                 imageHeader,
@@ -362,7 +567,7 @@ void MainframeWindow::drawRightChild()
                                 rgbBuffer[rgbWritePage]
                             );
                             auto elapsed = std::chrono::high_resolution_clock::now() - start;
-                            printf("Debayer in %lld ms\n", std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count());
+                            //printf("Debayer in %lld ms\n", std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count());
                             rgbWritePage = 1 - rgbWritePage;
                             imageProcessing = false;
                         }
@@ -393,7 +598,6 @@ void MainframeWindow::drawRightChild()
                     rgbBuffer[page]);
             }
         }
-        
 
         if (displayGlTexture && imageHeader.width && imageHeader.height) {
             ImVec2 space = ImGui::GetContentRegionAvail();
@@ -402,7 +606,6 @@ void MainframeWindow::drawRightChild()
             float arWindow = space.x / space.y;
 
             ImVec2 imgSize;
-
             if (arWindow < arImage) {
                 imgSize.x = space.x;
                 imgSize.y = space.x / arImage;
@@ -421,4 +624,25 @@ void MainframeWindow::drawRightChild()
     }
 
     ImGui::PopStyleColor();
+}
+
+void MainframeWindow::invalidateRGBImage(
+    size_t page
+) {
+    std::unique_lock lock(rgbMutex[page]);
+    memset(&rgbHeader[page], 0, sizeof(rgbHeader[page]));
+    if (rgbBuffer[page]) {
+        free(rgbBuffer[page]);
+        rgbBuffer[page] = NULL;
+    }
+}
+
+void MainframeWindow::resetRADecDTO()
+{
+    for (size_t i = 0; i < RA_DEC_TABLE_MAX_SIZE; i++)
+        memset(&RADecDTO[i], 0, sizeof(RADecDTO[i]));
+    if (skySolverConnector.isConnected()) {
+        skySolverConnector.stopSolve();
+        skySolverConnector.resetLastPlatesolveResult();
+    }
 }

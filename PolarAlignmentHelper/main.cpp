@@ -8,13 +8,16 @@
 
 // This is provided for completeness, however it is strongly recommended you use OpenGL with SDL or GLFW.
 
-#include "imgui.h"
-#include "imgui_impl_opengl3.h"
-#include "imgui_impl_win32.h"
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <winsock.h>
+
+#include "imgui.h"
+#include "imgui_impl_opengl3.h"
+#include "imgui_impl_win32.h"
+
 #include <GL/gl.h>
 #include <tchar.h>
 
@@ -25,7 +28,7 @@
 
 
 
-const wchar_t* APPLICATION_TITLE = L"Polar Alignment Helper (Toupcamera)";
+const wchar_t* APPLICATION_TITLE = L"Polar Alignment Helper (Toupcam)";
 MainframeWindow* g_pWindow;
 
 // Data stored per platform window
@@ -160,7 +163,7 @@ int main(int, char**)
         }
         
         if (g_pWindow)
-            g_pWindow->draw("Window");
+            g_pWindow->draw_n_check_connection("Window");
 
         // Rendering
         ImGui::Render();

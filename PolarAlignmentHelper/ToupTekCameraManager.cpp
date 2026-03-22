@@ -241,7 +241,7 @@ bool ToupTekCameraManager::openDevice(
         bytes <<= 1;
 #endif
         bytes = min(bytes, sizeof(taskMeta.openDevice.id));
-        memcpy(taskMeta.openDevice.id, id.c_str(), bytes);
+        memcpy(&taskMeta.openDevice.id, id.c_str(), bytes);
         taskMeta.openDevice.id[63] = 0;
     }
 

@@ -57,13 +57,13 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>$(ProjectDir)3rdparty\imgui;$(ProjectDir)3rdparty\imgui\backends;$(ProjectDir)3rdparty\ToupCamSDK\inc;$(ProjectDIr)3rdparty\utfcpp\source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)3rdparty\imgui;$(ProjectDir)3rdparty\imgui\backends;$(ProjectDir)3rdparty\ToupCamSDK\inc;$(ProjectDIr)3rdparty\utfcpp\source;$(ProjectDir)3rdparty\toojpeg;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>toupcam.lib;opengl32.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>wsock32.lib;toupcam.lib;opengl32.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(ProjectDir)3rdparty\ToupCamSDK\win\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
@@ -75,7 +75,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>$(ProjectDir)3rdparty\imgui;$(ProjectDir)3rdparty\imgui\backends;$(ProjectDir)3rdparty\ToupCamSDK\inc;$(ProjectDIr)3rdparty\utfcpp\source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)3rdparty\imgui;$(ProjectDir)3rdparty\imgui\backends;$(ProjectDir)3rdparty\ToupCamSDK\inc;$(ProjectDIr)3rdparty\utfcpp\source;$(ProjectDir)3rdparty\toojpeg;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
@@ -83,7 +83,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>toupcam.lib;opengl32.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>wsock32.lib;toupcam.lib;opengl32.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(ProjectDir)3rdparty\ToupCamSDK\win\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
@@ -95,9 +95,11 @@
     <ClCompile Include="3rdparty\imgui\imgui_draw.cpp" />
     <ClCompile Include="3rdparty\imgui\imgui_tables.cpp" />
     <ClCompile Include="3rdparty\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="3rdparty\toojpeg\toojpeg.cpp" />
     <ClCompile Include="ImGuiCustom.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="MainframeWindow.cpp" />
+    <ClCompile Include="SkySolverConnector.cpp" />
     <ClCompile Include="ThreadWorker.cpp" />
     <ClCompile Include="ToupTekCameraManager.cpp" />
     <ClCompile Include="Utility.cpp" />
@@ -112,10 +114,12 @@
     <ClInclude Include="3rdparty\imgui\imstb_rectpack.h" />
     <ClInclude Include="3rdparty\imgui\imstb_textedit.h" />
     <ClInclude Include="3rdparty\imgui\imstb_truetype.h" />
+    <ClInclude Include="3rdparty\toojpeg\toojpeg.h" />
     <ClInclude Include="3rdparty\ToupCamSDK\inc\toupcam.h" />
     <ClInclude Include="Debayer.h" />
     <ClInclude Include="ImGuiCustom.h" />
     <ClInclude Include="MainframeWindow.h" />
+    <ClInclude Include="SkySolverConnector.h" />
     <ClInclude Include="ThreadWorker.h" />
     <ClInclude Include="ToupTekCameraManager.h" />
     <ClInclude Include="Utility.h" />

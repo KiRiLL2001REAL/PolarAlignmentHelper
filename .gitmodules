@@ -7,3 +7,6 @@
 [submodule "PolarAlignmentHelper/3rdparty/utfcpp"]
 	path = PolarAlignmentHelper/3rdparty/utfcpp
 	url = https://github.com/KiRiLL2001REAL/utfcpp.git
+[submodule "PolarAlignmentHelper/3rdparty/toojpeg"]
+	path = PolarAlignmentHelper/3rdparty/toojpeg
+	url = https://github.com/KiRiLL2001REAL/toojpeg.git

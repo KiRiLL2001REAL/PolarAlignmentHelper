@@ -39,14 +39,6 @@ void ThreadWorker::stop()
         thr.join();
 }
 
-void little_sleep(std::chrono::microseconds us) {
-    auto start = std::chrono::high_resolution_clock::now();
-    auto end = start + us;
-    do {
-        std::this_thread::yield();
-    } while (std::chrono::high_resolution_clock::now() < end);
-}
-
 void ThreadWorker::addTask(TASK_ID task, TASK_META taskMeta)
 {
     std::scoped_lock<std::mutex> lock(taskQueueMutex);
@@ -90,11 +82,10 @@ void ThreadWorker::dropTasks()
 
 void ThreadWorker::loop()
 {
-    printf("[D] ThreadWorker::loop: start.\n");
+    printf("[D] ThreadWorker::loop: START.\n");
     while (work) {
         if (taskQueue.empty()) {
-            //printf("[D] ThreadWorker: yield.\n");
-            little_sleep(std::chrono::microseconds(25'000)); //25мс
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
             continue;
         }
 
@@ -185,5 +176,5 @@ void ThreadWorker::loop()
         }
         performingOperationWithDevice = false;
     }
-    printf("[D] ThreadWorker::loop: end.\n");
+    printf("[D] ThreadWorker::loop: END.\n");
 }
