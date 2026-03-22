@@ -60,7 +60,6 @@ MainframeWindow::MainframeWindow(HWND hWnd):
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
-    skySolverConnector.InitWinsock();
     resetRADecDTO();
 
     worker.start();
@@ -91,12 +90,9 @@ MainframeWindow::~MainframeWindow()
 
     invalidateRGBImage(0);
     invalidateRGBImage(1);
-
-    skySolverConnector.disconnect();
-    skySolverConnector.CleanupWinsock();
 }
 
-void MainframeWindow::draw_n_check_connection(
+void MainframeWindow::draw(
     const std::string& title
 ) {
     static bool first_entry = true;
@@ -119,46 +115,15 @@ void MainframeWindow::draw_n_check_connection(
 
         if (manager.isDeviceOpened() && !manager.isDeviceRunning())
             manager.startDevicePulling(hWnd);
-
-        // Проверка доступности сервера
-        {
-            using namespace std::chrono;
-
-            static steady_clock::time_point last_check = steady_clock::now() - milliseconds(SERVER_CHECKOUT_INTERVAL_MS);
-            static bool sky_solver_connector_checking = false;
-            
-            auto elapsed = duration_cast<milliseconds>(steady_clock::now() - last_check).count();
-            
-            if (!skySolverConnector.isConnected()) {
-                if (!sky_solver_connector_checking && elapsed >= SERVER_CHECKOUT_INTERVAL_MS) {
-                    sky_solver_connector_checking = true;
-                    std::thread thr([&]()
-                        {
-                            skySolverConnector.connect("127.0.0.1", 65432);
-                            sky_solver_connector_checking = false;
-                            last_check = steady_clock::now();
-                        }
-                    );
-                    thr.detach();
-                }
-            }
-            else {
-                if (!sky_solver_connector_checking && elapsed >= SERVER_CHECKOUT_INTERVAL_MS) {
-                    sky_solver_connector_checking = true;
-                    std::thread thr([&]()
-                        {
-                            skySolverConnector.ping();
-                            sky_solver_connector_checking = false;
-                            last_check = steady_clock::now();
-                        }
-                    );
-                    thr.detach();
-                }
-            }
-        }
-        
     }
     ImGui::End();
+}
+
+void MainframeWindow::setSkySolverConnectionAddress(
+    const std::string& ip,
+    int port
+) {
+    skySolverConnector.setConnectionAddress(ip, port);
 }
 
 LRESULT __stdcall MainframeWindow::WndProcHandler(
@@ -441,7 +406,10 @@ void MainframeWindow::drawLeftChild()
                                         printf("free\n");
                                         savingToDisk = false;
 
-                                        skySolverConnector.addMountPoint("img/pah_img.jpg", 60);
+                                        skySolverConnector.addMountPoint(
+                                            "img/pah_img.jpg",  // imagePath
+                                            120                 // timeLimitSec
+                                        );
                                     }
                                 );
                                 thr.detach();

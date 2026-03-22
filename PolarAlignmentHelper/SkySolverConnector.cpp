@@ -11,7 +11,10 @@ SkySolverConnector::SkySolverConnector() :
     m_serverIp(""),
     m_serverPort(0),
 
-    m_pThrUpdater(NULL),
+    m_connectPingThr(),
+    m_connectPingThrWork(false),
+
+    m_platesolveResultUpdaterThr(NULL),
     m_isSolveRunning(false),
     m_isSolveFinished(false),
     
@@ -21,7 +24,12 @@ SkySolverConnector::SkySolverConnector() :
     m_mountPtsDTOUpdated(false),
     m_mountPtsDTO()
 {
+    InitWinsock();
+
     resetLastPlatesolveResult();
+
+    m_connectPingThrWork = true;
+    m_connectPingThr = std::thread(&SkySolverConnector::loopConnectAndPing, this);
 }
 
 SkySolverConnector::~SkySolverConnector()
@@ -29,135 +37,34 @@ SkySolverConnector::~SkySolverConnector()
     {
         std::unique_lock lock(m_lastPlateSolveResultMutex);
         m_isSolveRunning = false;
-        if (m_pThrUpdater)
-            if (m_pThrUpdater->joinable())
-                m_pThrUpdater->join();
-        delete m_pThrUpdater;
-        m_pThrUpdater = NULL;
+        if (m_platesolveResultUpdaterThr)
+            if (m_platesolveResultUpdaterThr->joinable())
+                m_platesolveResultUpdaterThr->join();
+        delete m_platesolveResultUpdaterThr;
+        m_platesolveResultUpdaterThr = NULL;
     }
+
+    resetLastPlatesolveResult();
+
+    m_connectPingThrWork = false;
+    if (m_connectPingThr.joinable())
+        m_connectPingThr.join();
 
     disconnect();
-    resetLastPlatesolveResult();
+    CleanupWinsock();
 }
 
-bool SkySolverConnector::InitWinsock()
-{
-    static WSADATA wsaData;
-    int result = WSAStartup(MAKEWORD(1, 1), &wsaData);
-
-    switch (result) {
-    case WSASYSNOTREADY: {
-        printf("[E] SkySolverConnector::InitWinsock: The underlying network subsystem is not ready for network communication.\n");
-        break;
-    }
-    case WSAVERNOTSUPPORTED: {
-        printf("[E] SkySolverConnector::InitWinsock: The version of Windows Sockets support requested is not provided by this particular Windows Sockets implementation.\n");
-        break;
-    }
-    case WSAEINPROGRESS: {
-        printf("[E] SkySolverConnector::InitWinsock: A blocking Windows Sockets 1.1 operation is in progress.\n");
-        break;
-    }
-    case WSAEPROCLIM: {
-        printf("[E] SkySolverConnector::InitWinsock: A limit on the number of tasks supported by the Windows Sockets implementation has been reached.\n");
-        break;
-    }
-    case WSAEFAULT: {
-        printf("[E] SkySolverConnector::InitWinsock: The lpWSAData parameter is not a valid pointer.\n");
-        break;
-    }
-    }
-
-    if (S_OK == result)
-        printf("[i] SkySolverConnector::InitWinsock: Success.\n");
-
-    return S_OK == result;
-}
-
-void SkySolverConnector::CleanupWinsock()
-{
-    WSACleanup();
-    printf("[i] SkySolverConnector::CleanupWinsock: WSACleanup.\n");
+void SkySolverConnector::setConnectionAddress(
+    const std::string& ip,
+    int port
+) {
+    m_serverIp = ip;
+    m_serverPort = port;
 }
 
 bool SkySolverConnector::isConnected() const
 {
     return m_isConnected;
-}
-
-bool SkySolverConnector::connect(
-    const std::string& ip,
-    int port
-) {
-    if (m_isConnected)
-        disconnect();
-
-    m_sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (INVALID_SOCKET == m_sock) {
-        printf("[E] SkySolverConnector::connect: Socket initialization error (code: %d).\n", WSAGetLastError());
-        return false;
-    }
-
-    sockaddr_in serverAddr;
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(port);
-    serverAddr.sin_addr.s_addr = inet_addr(ip.c_str());
-
-    int result = ::connect(m_sock, (sockaddr*)&serverAddr, sizeof(serverAddr));
-    if (SOCKET_ERROR == result) {
-        printf("[E] SkySolverConnector::connect: Connection failed (code: %d).\n", WSAGetLastError());
-        closesocket(m_sock);
-        return false;
-    }
-
-    m_isConnected = true;
-    m_serverIp = ip;
-    m_serverPort = port;
-    printf("[i] SkySolverConnector::connect: Connection established (%s:%d).\n", ip.c_str(), port);
-
-    return true;
-}
-
-void SkySolverConnector::disconnect()
-{
-    if (m_isConnected) {
-        closesocket(m_sock);
-        m_sock = INVALID_SOCKET;
-        m_serverIp = "";
-        m_serverPort = 0;
-        m_isConnected = false;
-    }
-}
-
-bool SkySolverConnector::ping()
-{
-    if (!m_isConnected)
-        return false;
-
-    const char* msg = "PING";
-    int result = send(m_sock, msg, (int)strlen(msg), 0);
-    if (SOCKET_ERROR == result) {
-        disconnect();
-        return false;
-    }
-
-    char buffer[1024] = { 0 };
-    int bytes = recv(m_sock, buffer, sizeof(buffer), 0);
-
-    std::string response;
-    if (bytes > 0) {
-        response = std::string(buffer, bytes);
-        if ("PONG" != response) {
-            printf("[W] SkySolverConnector::ping: Strange server anwser (%s).\n", response.c_str());
-            return false;
-        }
-    }
-    else if (bytes <= 0) {
-        disconnect();
-        return false;
-    }
-
-    return true;
 }
 
 bool SkySolverConnector::startSolve(
@@ -258,9 +165,9 @@ bool SkySolverConnector::addMountPoint(
             m_isSolveFinished = false;
         }
 
-        if (m_pThrUpdater)
+        if (m_platesolveResultUpdaterThr)
             throw std::exception("m_pThrUpdater is running");
-        m_pThrUpdater = new std::thread(&SkySolverConnector::loopUpdatePlatesolveResult, this);
+        m_platesolveResultUpdaterThr = new std::thread(&SkySolverConnector::loopUpdatePlatesolveResult, this);
 
         std::thread thr([&]()
             {
@@ -290,11 +197,11 @@ bool SkySolverConnector::addMountPoint(
 
                 {
                     std::unique_lock lock(m_lastPlateSolveResultMutex);
-                    if (m_pThrUpdater)
-                        if (m_pThrUpdater->joinable())
-                            m_pThrUpdater->join();
-                    delete m_pThrUpdater;
-                    m_pThrUpdater = NULL;
+                    if (m_platesolveResultUpdaterThr)
+                        if (m_platesolveResultUpdaterThr->joinable())
+                            m_platesolveResultUpdaterThr->join();
+                    delete m_platesolveResultUpdaterThr;
+                    m_platesolveResultUpdaterThr = NULL;
                 }
             }
         );
@@ -367,13 +274,141 @@ const SkySolverConnector::PlatesolveResult& SkySolverConnector::getLastPlatesolv
     return res;
 }
 
+bool SkySolverConnector::InitWinsock()
+{
+    static WSADATA wsaData;
+    int result = WSAStartup(MAKEWORD(1, 1), &wsaData);
+
+    switch (result) {
+    case WSASYSNOTREADY: {
+        printf("[E] SkySolverConnector::InitWinsock: The underlying network subsystem is not ready for network communication.\n");
+        break;
+    }
+    case WSAVERNOTSUPPORTED: {
+        printf("[E] SkySolverConnector::InitWinsock: The version of Windows Sockets support requested is not provided by this particular Windows Sockets implementation.\n");
+        break;
+    }
+    case WSAEINPROGRESS: {
+        printf("[E] SkySolverConnector::InitWinsock: A blocking Windows Sockets 1.1 operation is in progress.\n");
+        break;
+    }
+    case WSAEPROCLIM: {
+        printf("[E] SkySolverConnector::InitWinsock: A limit on the number of tasks supported by the Windows Sockets implementation has been reached.\n");
+        break;
+    }
+    case WSAEFAULT: {
+        printf("[E] SkySolverConnector::InitWinsock: The lpWSAData parameter is not a valid pointer.\n");
+        break;
+    }
+    }
+
+    if (S_OK == result)
+        printf("[i] SkySolverConnector::InitWinsock: Success.\n");
+
+    return S_OK == result;
+}
+
+void SkySolverConnector::CleanupWinsock()
+{
+    WSACleanup();
+    printf("[i] SkySolverConnector::CleanupWinsock: WSACleanup.\n");
+}
+
+bool SkySolverConnector::connect()
+{
+    if (m_isConnected)
+        disconnect();
+
+    m_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (INVALID_SOCKET == m_sock) {
+        printf("[E] SkySolverConnector::connect: Socket initialization error (code: %d).\n", WSAGetLastError());
+        return false;
+    }
+
+    sockaddr_in serverAddr;
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(m_serverPort);
+    serverAddr.sin_addr.s_addr = inet_addr(m_serverIp.c_str());
+
+    int result = ::connect(m_sock, (sockaddr*)&serverAddr, sizeof(serverAddr));
+    if (SOCKET_ERROR == result) {
+        printf("[E] SkySolverConnector::connect: Connection failed (code: %d).\n", WSAGetLastError());
+        disconnect();
+        return false;
+    }
+
+    m_isConnected = true;
+    printf("[i] SkySolverConnector::connect: Connection established (%s:%d).\n", m_serverIp.c_str(), m_serverPort);
+
+    return true;
+}
+
+void SkySolverConnector::disconnect()
+{
+    if (m_isConnected) {
+        closesocket(m_sock);
+        m_sock = INVALID_SOCKET;
+        m_isConnected = false;
+    }
+}
+
+bool SkySolverConnector::ping()
+{
+    if (!m_isConnected)
+        return false;
+
+    const char* msg = "PING";
+    int result = send(m_sock, msg, (int)strlen(msg), 0);
+    if (SOCKET_ERROR == result) {
+        disconnect();
+        return false;
+    }
+
+    char buffer[1024] = { 0 };
+    int bytes = recv(m_sock, buffer, sizeof(buffer), 0);
+
+    std::string response;
+    if (bytes > 0) {
+        response = std::string(buffer, bytes);
+        if ("PONG" != response) {
+            printf("[W] SkySolverConnector::ping: Strange server anwser (%s).\n", response.c_str());
+            return false;
+        }
+    }
+    else if (bytes <= 0) {
+        disconnect();
+        return false;
+    }
+
+    return true;
+}
+
+void SkySolverConnector::loopConnectAndPing()
+{
+    static const auto SERVER_CHECKING_INTERVAL = std::chrono::nanoseconds(2'500'000'000);  // 2500ms
+    std::chrono::high_resolution_clock::time_point last_checkout;
+
+    printf("[D] SkySolverConnector::loopConnectAndPing: START.\n");
+    while (m_connectPingThrWork) {
+        last_checkout = std::chrono::high_resolution_clock::now();
+
+        if (isConnected()) ping();
+        else               connect();
+
+        auto elapsed = std::chrono::high_resolution_clock::now() - last_checkout;
+        if (elapsed >= SERVER_CHECKING_INTERVAL) continue;
+        std::this_thread::sleep_for(std::chrono::nanoseconds(SERVER_CHECKING_INTERVAL - elapsed));
+    }
+    printf("[D] SkySolverConnector::loopConnectAndPing: END.\n");
+}
+
 void SkySolverConnector::loopUpdatePlatesolveResult()
 {
     printf("[D] SkySolverConnector::loopUpdatePlatesolveResult: START.\n");
     while (m_isSolveRunning) {
 
         std::string status;
-        if (!ping() || !getStatus(status)) {
+        if (!m_isConnected || !getStatus(status)) {
             printf("[E] SkySolverConnector::loopUpdatePlatesolveResult: Server unreachable.\n");
             {
                 std::unique_lock lock(m_lastPlateSolveResultMutex);

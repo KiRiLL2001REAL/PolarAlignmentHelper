@@ -123,6 +123,7 @@ int main(int, char**)
     bool done = false;
 
     g_pWindow = new MainframeWindow(hwnd);
+    g_pWindow->setSkySolverConnectionAddress("127.0.0.1", 65432);
 
     while (!done)
     {
@@ -163,7 +164,7 @@ int main(int, char**)
         }
         
         if (g_pWindow)
-            g_pWindow->draw_n_check_connection("Window");
+            g_pWindow->draw("Window");
 
         // Rendering
         ImGui::Render();

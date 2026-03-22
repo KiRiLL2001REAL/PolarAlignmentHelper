@@ -45,13 +45,9 @@ public:
     SkySolverConnector();
     virtual ~SkySolverConnector();
 
-    static bool InitWinsock();
-    static void CleanupWinsock();
+    void setConnectionAddress(const std::string& ip, int port);
 
     bool isConnected() const;
-    bool connect(const std::string& ip, int port);
-    void disconnect();
-    bool ping();
 
     bool startSolve(const std::string& imagePath, size_t timeLimitSec = 0);
     bool stopSolve();
@@ -68,14 +64,17 @@ public:
     const PlatesolveResult& getLastPlatesolveResult();
 
 protected:
-    SOCKET       m_sock;
-    bool         m_isConnected;
-    std::string  m_serverIp;
-    int          m_serverPort;
+    SOCKET         m_sock;
+    volatile bool  m_isConnected;
+    std::string    m_serverIp;
+    int            m_serverPort;
+
+    std::thread    m_connectPingThr;
+    volatile bool  m_connectPingThrWork;
 
     mutable std::shared_mutex  m_lastPlateSolveResultMutex;
     PlatesolveResult           m_lastPlateSolveResult;
-    std::thread*               m_pThrUpdater;
+    std::thread*               m_platesolveResultUpdaterThr;
     volatile bool              m_isSolveRunning;
     volatile bool              m_isSolveFinished;
 
@@ -86,6 +85,15 @@ protected:
     // кэширование
     volatile bool               m_mountPtsDTOUpdated;
     std::vector<PlatesolveDTO>  m_mountPtsDTO;
+
+    static bool InitWinsock();
+    static void CleanupWinsock();
+
+    bool connect();
+    void disconnect();
+    bool ping();
+
+    void loopConnectAndPing();
 
     void loopUpdatePlatesolveResult();
 

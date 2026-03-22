@@ -17,7 +17,8 @@ public:
     MainframeWindow(HWND hWnd);
     virtual ~MainframeWindow();
 
-    void draw_n_check_connection(const std::string& title);
+    void draw(const std::string& title);
+    void setSkySolverConnectionAddress(const std::string& ip, int port);
 
     LRESULT WINAPI WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
