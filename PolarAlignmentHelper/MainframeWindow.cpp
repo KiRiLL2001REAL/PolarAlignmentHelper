@@ -24,17 +24,18 @@ static constexpr char LC_LEFT_SECTION_POLAR_ALIGNMENT[]           = u8"Установка
 static constexpr char LC_LEFT_LABEL_SERVER_STATUS[]               = u8"Статус локального сервера:";
 static constexpr char LC_LEFT_LABEL_SERVER_STATUS_ONLINE[]        = u8"Соединение установлено";
 static constexpr char LC_LEFT_LABEL_SERVER_STATUS_OFFLINE[]       = u8"Соединения нет";
-static constexpr char LC_LEFT_BTN_ADD_MOUNT_POINT[]               = u8"Добавить точку";
-static constexpr char LC_LEFT_BTN_SET_POINT_TOOLTIP[]             = u8"Наведите телескоп на область неба, наиболее близкую к полярной звезде.\nУчтите, что в будущем вам нужно будет поворачивать RA по часовой стрелке.\nДобавьте минимум 3 точки.";
-static constexpr char LC_LEFT_MOUNT_POINTS_LABEL[]                = u8"Координаты для определения смещения RA монтировки";
-static constexpr char LC_LEFT_BTN_CLEAR_MOUNT_POINTS[]            = u8"Очистить\nточки";
+static constexpr char LC_LEFT_BTN_ADD_MOUNT_PLATE[]               = u8"Добавить пластину";
+static constexpr char LC_LEFT_BTN_SET_MOUNT_PLATE_TOOLTIP[]       = u8"Наведите телескоп на область неба, наиболее близкую к полярной звезде.\nУчтите, что в будущем вам нужно будет поворачивать RA по часовой стрелке.\nДобавьте минимум 3 пластины.";
+static constexpr char LC_LEFT_LABEL_MOUNT_PLATES[]                = u8"Координаты для определения смещения RA монтировки";
+static constexpr char LC_LEFT_LABEL_PLATE_FAIL_SOLVE[]            = u8"n/a";
+static constexpr char LC_LEFT_LABEL_PLATE_IN_QUEUE[]              = u8"...";
+static constexpr char LC_LEFT_BTN_CLEAR_MOUNT_PLATES[]            = u8"Очистить\nточки";
 
 
 MainframeWindow::MainframeWindow(HWND hWnd):
     hWnd(hWnd),
 
-    worker(),
-    manager(&worker),
+    cameraManager(),
     
     devicesDTO(),
     deviceResolutionsDTO(),
@@ -48,8 +49,9 @@ MainframeWindow::MainframeWindow(HWND hWnd):
     imageBuffer(NULL),
     rgbWritePage(0),
 
-    skySolverConnector(),
-    RADecDTO(RA_DEC_TABLE_MAX_SIZE)
+    solveManager(),
+
+    mountPlatesDTO()
 {
     memset(&imageHeader, 0, sizeof(imageHeader));
     memset(&rgbHeader[0], 0, sizeof(rgbHeader[0]));
@@ -59,16 +61,10 @@ MainframeWindow::MainframeWindow(HWND hWnd):
     glBindTexture(GL_TEXTURE_2D, displayGlTexture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-    resetRADecDTO();
-
-    worker.start();
 }
 
 MainframeWindow::~MainframeWindow()
 {
-    worker.stop();
-
     devicesDTO.clear();
     deviceResolutionsDTO.clear();
     pixelFormatsDTO.clear();
@@ -98,7 +94,7 @@ void MainframeWindow::draw(
     static bool first_entry = true;
     if (first_entry) {
         first_entry = false;
-        manager.updateDeviceList();
+        cameraManager.updateDeviceList();
     }
 
     static ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration;// | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings;
@@ -113,17 +109,29 @@ void MainframeWindow::draw(
         ImGui::SameLine();
         drawRightChild();
 
-        if (manager.isDeviceOpened() && !manager.isDeviceRunning())
-            manager.startDevicePulling(hWnd);
+        if (cameraManager.isDeviceOpened() && !cameraManager.isDeviceRunning())
+            cameraManager.startDevicePulling(hWnd);
     }
     ImGui::End();
 }
 
-void MainframeWindow::setSkySolverConnectionAddress(
+void MainframeWindow::setSolverAddress(
     const std::string& ip,
     int port
 ) {
-    skySolverConnector.setConnectionAddress(ip, port);
+    solveManager.setConnectionAddress(ip, port);
+}
+
+void MainframeWindow::setSaveDirectory(
+    const std::filesystem::path& saveDirectory
+) {
+    solveManager.setSaveDirectory(saveDirectory);
+}
+
+void MainframeWindow::setSolvingTimeLimitSec(
+    size_t timeLimitSec
+) {
+    solveManager.setSolvingTimeLimit(timeLimitSec);
 }
 
 LRESULT __stdcall MainframeWindow::WndProcHandler(
@@ -132,7 +140,7 @@ LRESULT __stdcall MainframeWindow::WndProcHandler(
     WPARAM wParam,
     LPARAM lParam
 ) {
-    return manager.WndProcHandler(hWnd, msg, wParam, lParam);
+    return cameraManager.WndProcHandler(hWnd, msg, wParam, lParam);
 }
 
 void MainframeWindow::drawLeftChild()
@@ -151,13 +159,13 @@ void MainframeWindow::drawLeftChild()
         ImGui::SeparatorText(LC_LEFT_SECTION_DEVICE_SELECT);
         {
             // комбо выбора камеры
-            ImGui::BeginDisabled(manager.isDeviceOpened());
+            ImGui::BeginDisabled(cameraManager.isDeviceOpened());
             {
                 static std::vector<std::string> items_device = {};
                 // static size_t item_device_idx = 0;  // перемещён в более общую область видимости
 
                 bool devicesDTOUpdated = false;
-                devicesDTO = manager.getDevicesIdDTO(&devicesDTOUpdated);
+                devicesDTO = cameraManager.getDevicesIdDTO(&devicesDTOUpdated);
                 if (devicesDTOUpdated) {
                     item_device_idx = 0;
                     items_device.clear();
@@ -184,10 +192,10 @@ void MainframeWindow::drawLeftChild()
                 char buffer[64];
                 snprintf(buffer, sizeof(buffer), u8"%s##btnUpdateDevices", LC_LEFT_BTN_UPDATE_DEVICES);
                 if (ImGui::Button(buffer)) {
-                    manager.updateDeviceList();
+                    cameraManager.updateDeviceList();
                 }
             }
-            ImGui::EndDisabled();  // # ImGui::BeginDisabled(manager.isDeviceOpened());
+            ImGui::EndDisabled();  // # ImGui::BeginDisabled(cameraManager.isDeviceOpened());
 
             // кнопка вызова информационного окна
             ImGui::SameLine();
@@ -208,20 +216,20 @@ void MainframeWindow::drawLeftChild()
 
         // 2 строка: Кнопка подключения / отключения камеры
         {
-            ImGui::BeginDisabled(!selected_device_valid || manager.waitingDeviceToOpen());
+            ImGui::BeginDisabled(!selected_device_valid || cameraManager.waitingDeviceToOpen());
 
             char buffer[64];
-            snprintf(buffer, sizeof(buffer), u8"%s##toggleOpenCloseDevice", manager.isDeviceOpened() ? LC_LEFT_BTN_TOGGLE_DEV_DISCONNECT : LC_LEFT_BTN_TOGGLE_DEV_CONNECT);
+            snprintf(buffer, sizeof(buffer), u8"%s##toggleOpenCloseDevice", cameraManager.isDeviceOpened() ? LC_LEFT_BTN_TOGGLE_DEV_DISCONNECT : LC_LEFT_BTN_TOGGLE_DEV_CONNECT);
             static ImVec2 _FramePadding = ImGui::GetStyle().FramePadding;
             float width = max(ImGui::CalcTextSize(LC_LEFT_BTN_TOGGLE_DEV_DISCONNECT).x, ImGui::CalcTextSize(LC_LEFT_BTN_TOGGLE_DEV_CONNECT).x) + _FramePadding.x * 2.f;
             if (ImGui::Button(buffer, ImVec2(width, 0))) {
-                if (manager.isDeviceOpened()) {
-                    manager.closeDevice();
+                if (cameraManager.isDeviceOpened()) {
+                    cameraManager.closeDevice();
                     invalidateRGBImage(0);
                     invalidateRGBImage(1);
                 }
                 else
-                    manager.openDevice(devicesDTO[item_device_idx].id);
+                    cameraManager.openDevice(devicesDTO[item_device_idx].id);
             }
 
             ImGui::EndDisabled();  // # ImGui::BeginDisabled(!selected_device_valid);
@@ -230,7 +238,7 @@ void MainframeWindow::drawLeftChild()
         ImGui::Dummy(ImVec2(0, 8));
         ImGui::SeparatorText(LC_LEFT_SECTION_CAPTURE_SETTINGS);
 
-        ImGui::BeginDisabled(!(selected_device_valid && manager.isDeviceOpened()));
+        ImGui::BeginDisabled(!(selected_device_valid && cameraManager.isDeviceOpened()));
         // 3 строка: Разрешение
         {
             static std::vector<std::string> items_resolution = {};
@@ -238,7 +246,7 @@ void MainframeWindow::drawLeftChild()
             static size_t prev_item_resolution_idx = 1024;
 
             bool deviceResolutionsDTOUpdated = false;
-            deviceResolutionsDTO = manager.getPreviewResolutionsDTO(&deviceResolutionsDTOUpdated);
+            deviceResolutionsDTO = cameraManager.getPreviewResolutionsDTO(&deviceResolutionsDTOUpdated);
             if (deviceResolutionsDTOUpdated) {
                 prev_item_resolution_idx = 1024;
                 item_resolution_idx = 0;
@@ -258,8 +266,8 @@ void MainframeWindow::drawLeftChild()
             snprintf(buffer, sizeof(buffer), u8"%s##resolutionSelector", LC_LEFT_COMBO_RESOLUTION_LABEL);
             ImGuiCustom::combo(buffer, items_resolution, &item_resolution_idx, item_resolution_preview, 0, 260.f);
 
-            if (prev_item_resolution_idx != item_resolution_idx && manager.isDeviceOpened()) {
-                manager.setCameraPreviewResolution(item_resolution_idx);
+            if (prev_item_resolution_idx != item_resolution_idx && cameraManager.isDeviceOpened()) {
+                cameraManager.setCameraPreviewResolution(item_resolution_idx);
                 prev_item_resolution_idx = item_resolution_idx;
             }
         }
@@ -270,7 +278,7 @@ void MainframeWindow::drawLeftChild()
             static size_t prev_item_pixel_format_idx = 1024;
 
             bool pixelFormatsDTOUpdated = false;
-            pixelFormatsDTO = manager.getPixelFormatsDTO(&pixelFormatsDTOUpdated);
+            pixelFormatsDTO = cameraManager.getPixelFormatsDTO(&pixelFormatsDTOUpdated);
             if (pixelFormatsDTOUpdated) {
                 prev_item_pixel_format_idx = 1024;
                 item_pixel_format_idx = 0;
@@ -286,8 +294,8 @@ void MainframeWindow::drawLeftChild()
             snprintf(buffer, sizeof(buffer), u8"%s##pixelFormatSelector", LC_LEFT_COMBO_PIXFMT_LABEL);
             ImGuiCustom::combo(buffer, items_pixel_format, &item_pixel_format_idx, item_pixel_format_preview, 0, 260.f);
 
-            if (prev_item_pixel_format_idx != item_pixel_format_idx && manager.isDeviceOpened()) {
-                manager.setPixelFormat(pixelFormatsDTO[item_pixel_format_idx].pixelFormat);
+            if (prev_item_pixel_format_idx != item_pixel_format_idx && cameraManager.isDeviceOpened()) {
+                cameraManager.setPixelFormat(pixelFormatsDTO[item_pixel_format_idx].pixelFormat);
                 prev_item_pixel_format_idx = item_pixel_format_idx;
             }
         }
@@ -300,7 +308,7 @@ void MainframeWindow::drawLeftChild()
             static bool firstEntry = true;
 
             bool exposureTimeRangeUpdated = false;
-            exposureTimeRangeDTO = manager.getExposureTimeRange(&exposureTimeRangeUpdated);
+            exposureTimeRangeDTO = cameraManager.getExposureTimeRange(&exposureTimeRangeUpdated);
             if (exposureTimeRangeUpdated)
                 current_value = exposureTimeRangeDTO.def;
 
@@ -314,9 +322,9 @@ void MainframeWindow::drawLeftChild()
             ImGui::SliderFloat(buffer, &val, _min, _max, u8"%.3f ms", flags);
 
             unsigned new_value = unsigned(std::roundf(val * 1000));
-            if (new_value != current_value || (firstEntry && manager.isDeviceOpened())) {
+            if (new_value != current_value || (firstEntry && cameraManager.isDeviceOpened())) {
                 firstEntry = false;
-                if (manager.setExposureTime(new_value, &new_value)) {
+                if (cameraManager.setExposureTime(new_value, &new_value)) {
                     current_value = new_value;
                 }
             }
@@ -329,7 +337,7 @@ void MainframeWindow::drawLeftChild()
             static bool firstEntry = true;
         
             bool exposureGainRangeUpdated = false;
-            exposureGainRangeDTO = manager.getExposureGainRange(&exposureGainRangeUpdated);
+            exposureGainRangeDTO = cameraManager.getExposureGainRange(&exposureGainRangeUpdated);
             if (exposureGainRangeUpdated)
                 current_value = exposureGainRangeDTO.def;
         
@@ -342,13 +350,13 @@ void MainframeWindow::drawLeftChild()
             ImGui::SetNextItemWidth(260.f);
             ImGui::SliderInt(buffer, &val, _min, _max, u8"%d %%", flags);
         
-            if (val != current_value || (firstEntry && manager.isDeviceOpened())) {
+            if (val != current_value || (firstEntry && cameraManager.isDeviceOpened())) {
                 firstEntry = false;
-                if (manager.setExposureGain(val))
+                if (cameraManager.setExposureGain(val))
                     current_value = val;
             }
         }
-        ImGui::EndDisabled();  // # ImGui::BeginDisabled(!(selected_device_valid && manager.isDeviceOpened()));
+        ImGui::EndDisabled();  // # ImGui::BeginDisabled(!(selected_device_valid && cameraManager.isDeviceOpened()));
         
         ImGui::Dummy(ImVec2(0, 8));
         ImGui::SeparatorText(LC_LEFT_SECTION_POLAR_ALIGNMENT);
@@ -361,142 +369,130 @@ void MainframeWindow::drawLeftChild()
             static const ImVec4 COLOR_RED = ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
             static const ImVec4 COLOR_GREEN = ImVec4(0.0f, 1.0f, 0.0f, 1.0f);
             
-            const ImVec4 color = skySolverConnector.isConnected() ? ImColor(COLOR_GREEN) : ImColor(COLOR_RED);
-            const char* text = skySolverConnector.isConnected() ? LC_LEFT_LABEL_SERVER_STATUS_ONLINE : LC_LEFT_LABEL_SERVER_STATUS_OFFLINE;
+            const ImVec4 color = solveManager.isServerConnected() ? ImColor(COLOR_GREEN) : ImColor(COLOR_RED);
+            const char* text = solveManager.isServerConnected() ? LC_LEFT_LABEL_SERVER_STATUS_ONLINE : LC_LEFT_LABEL_SERVER_STATUS_OFFLINE;
 
             ImGui::SameLine();
             ImGui::TextColored(color, text);
         }
         ImGui::Dummy(ImVec2(0, 16));
+        
         // 8 строка - кнопки, связанные с астрономическими расчетами
-        ImGui::BeginDisabled(!skySolverConnector.isConnected() || NULL == rgbBuffer[1 - rgbWritePage]);
+        ImGui::BeginDisabled(!solveManager.isServerConnected());
         {
-            auto& mountPtsDTO = skySolverConnector.getMountPointsDTO();
-
+            ImGui::BeginDisabled(solveManager.isImageSaving() || !solveManager.canAddMountPlates() || !cameraManager.isDeviceOpened());
             {
-                static bool savingToDisk = false;
-                ImGui::BeginDisabled(
-                    savingToDisk || skySolverConnector.isSolveRunning() ||
-                    mountPtsDTO.size() >= RA_DEC_TABLE_MAX_SIZE ||
-                    skySolverConnector.isMountPointPending() && mountPtsDTO.size() >= RA_DEC_TABLE_MAX_SIZE - 1
-                );
+                char buffer[64];
+                snprintf(buffer, sizeof(buffer), u8"%s##btnAddMountPlate", LC_LEFT_BTN_ADD_MOUNT_PLATE);
+                if (ImGui::Button(buffer, ImVec2(-1, 0))) {
+                    size_t page = 1 - rgbWritePage;
+                    std::shared_lock lock(rgbMutex[page]);
+                    bool img_valid = rgbHeader[page].width && rgbHeader[page].height && !rgbHeader[page].isRaw;
+                    if (img_valid)
+                    {
+                        solveManager.solveMountPlate(
+                            rgbBuffer[page],
+                            rgbHeader[page],
+                            90,
+                            "IMG");
+                    }
+                    else
+                    {
+                        printf("[W] Attempt add mount plate with invalid image.\n");
+                    }
+                }
+            }
+            ImGui::EndDisabled();
+        }
+        // строка - таблица со статусом решения пластин монтировки
+        {
+            ImGui::Text(LC_LEFT_LABEL_MOUNT_PLATES);
+
+            mountPlatesDTO = solveManager.getMountPlatesDTO();
+
+            static ImGuiTableFlags grid_table_flags = ImGuiTableFlags_NoPadOuterX | ImGuiTableFlags_SizingFixedFit;
+            if (ImGui::BeginTable("##gridTable", 2, grid_table_flags))
+            {  // gridTable
+                ImGui::TableSetupColumn("table", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn("btn", ImGuiTableColumnFlags_WidthFixed, -1);
+                ImGui::TableNextRow();  // gridTable
+                ImGui::TableSetColumnIndex(0);  // gridTable
+                // сама таблица
+                {
+                    static ImGuiTableFlags flags =
+                        ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg |
+                        ImGuiTableFlags_Borders | ImGuiTableFlags_Resizable;
+
+                    if (ImGui::BeginTable("table", 3, flags)) {
+                        ImGui::TableSetupColumn("n", ImGuiTableColumnFlags_WidthFixed);
+                        ImGui::TableSetupColumn("RA", ImGuiTableColumnFlags_WidthStretch);
+                        ImGui::TableSetupColumn("Dec", ImGuiTableColumnFlags_WidthStretch);
+                        ImGui::TableHeadersRow();
+
+                        size_t rows_drawn = 0;
+                        for (size_t i = 0; i < mountPlatesDTO.size(); i++) {
+                            rows_drawn++;
+                            ImGui::TableNextRow();
+
+                            auto& dto = mountPlatesDTO[i];
+
+                            std::string row_n_str = std::to_string(rows_drawn);
+                            std::string ra_str;
+                            std::string dec_str;
+
+                            if (dto.processed) {
+                                if (dto.success) {
+                                    ra_str = std::to_string(dto.ra);
+                                    dec_str = std::to_string(dto.dec);
+                                }
+                                else {
+                                    ra_str = dec_str = LC_LEFT_LABEL_PLATE_FAIL_SOLVE;
+                                }
+                            }
+                            else {
+                                if (dto.solving) {
+                                    static const char* spinner[4] = { " |", "  /", "  ---", "  \\" };
+                                    ra_str = dec_str = std::string(spinner[size_t(ImGui::GetTime() * 4) & 3]);
+                                }
+                                else {
+                                    ra_str = dec_str = u8"...";
+                                }
+                            }
+
+                            ImGui::TableSetColumnIndex(0);
+                            ImGui::Text(row_n_str.c_str());
+                            ImGui::TableSetColumnIndex(1);
+                            ImGui::Text(ra_str.c_str());
+                            ImGui::TableSetColumnIndex(2);
+                            ImGui::Text(dec_str.c_str());
+                        }
+                        // добитие пустых рядов
+                        for (size_t i = rows_drawn; i < MOUNT_POINTS_MIN_DISPLAYED_ITEMS; i++) {
+                            ImGui::TableNextRow();
+                            ImGui::TableSetColumnIndex(0);
+                            ImGui::Text(" ");
+                            ImGui::TableSetColumnIndex(1);
+                            ImGui::Text(" ");
+                            ImGui::TableSetColumnIndex(2);
+                            ImGui::Text(" ");
+                        }
+
+                        ImGui::EndTable();
+                    }
+                }
+                ImGui::TableSetColumnIndex(1);  // gridTable
+                // секция кнопок
                 {
                     char buffer[64];
-                    snprintf(buffer, sizeof(buffer), u8"%s##btnAddPoint", LC_LEFT_BTN_ADD_MOUNT_POINT);
-                    if (ImGui::Button(buffer, ImVec2(-1, 0))) {
-                        if (!savingToDisk) {
-                            size_t page = 1 - rgbWritePage;
-                            std::shared_lock lock(rgbMutex[page]);
-                            if (!skySolverConnector.isSolveRunning() && rgbHeader[page].width && rgbHeader[page].height && !rgbHeader[page].isRaw) {
-                                savingToDisk = true;
-
-                                static ToupTekCameraManager::FrameHeader rgbHeaderCopy;
-                                static BYTE* rgbBufferCopy;
-
-                                rgbHeaderCopy = rgbHeader[page];
-                                rgbBufferCopy = (BYTE*)malloc(rgbHeaderCopy.buffer_size);
-                                memcpy(rgbBufferCopy, rgbBuffer[page], rgbHeaderCopy.buffer_size);
-                                printf("allocate\n");
-                                std::thread thr([&]()
-                                    {
-                                        Utility::writeRGBJpeg(rgbBufferCopy, rgbHeaderCopy.width, rgbHeaderCopy.height, 100, "img/pah_img.jpg");
-
-                                        memset(&rgbHeaderCopy, 0, sizeof(rgbHeaderCopy));
-                                        free(rgbBufferCopy);
-                                        printf("free\n");
-                                        savingToDisk = false;
-
-                                        skySolverConnector.addMountPoint(
-                                            "img/pah_img.jpg",  // imagePath
-                                            120                 // timeLimitSec
-                                        );
-                                    }
-                                );
-                                thr.detach();
-                            }
-                        }
+                    snprintf(buffer, sizeof(buffer), "%s##btnClearPoints", LC_LEFT_BTN_CLEAR_MOUNT_PLATES);
+                    if (ImGui::Button(buffer)) {
+                        solveManager.clearMountPlates();
                     }
-                    ImGui::SetItemTooltip(LC_LEFT_BTN_SET_POINT_TOOLTIP);
                 }
-                ImGui::EndDisabled();  // # skySolverConnector.isSolveRunning() || mountPtsDTO.size() >= RA_DEC_TABLE_MAX_SIZE || skySolverConnector.isMountPointPending() && mountPtsDTO.size() >= RA_DEC_TABLE_MAX_SIZE - 1
-            }
-            // 9 строка - таблица с точками
-            {
-                ImGui::Text(LC_LEFT_MOUNT_POINTS_LABEL);
-
-                static ImGuiTableFlags grid_table_flags = ImGuiTableFlags_NoPadOuterX | ImGuiTableFlags_SizingFixedFit;
-                if (ImGui::BeginTable("##gridTable", 2, grid_table_flags))
-                {  // gridTable
-                    ImGui::TableSetupColumn("table", ImGuiTableColumnFlags_WidthStretch);
-                    ImGui::TableSetupColumn("btn", ImGuiTableColumnFlags_WidthFixed, -1);
-                    ImGui::TableNextRow();  // gridTable
-                    ImGui::TableSetColumnIndex(0);  // gridTable
-                    {
-                        static ImGuiTableFlags flags =
-                            ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg |
-                            ImGuiTableFlags_Borders | ImGuiTableFlags_Resizable;
-
-                        if (ImGui::BeginTable("table", 3, flags)) {
-                            ImGui::TableSetupColumn("n", ImGuiTableColumnFlags_WidthFixed);
-                            ImGui::TableSetupColumn("RA", ImGuiTableColumnFlags_WidthStretch);
-                            ImGui::TableSetupColumn("Dec", ImGuiTableColumnFlags_WidthStretch);
-                            ImGui::TableHeadersRow();
-                            size_t rows_drawn = 0;
-                            for (size_t i = 0; i < mountPtsDTO.size(); i++) {
-                                rows_drawn++;
-                                ImGui::TableNextRow();
-
-                                std::string row_n_str = std::to_string(rows_drawn);
-                                std::string ra_str = std::to_string(mountPtsDTO[i].ra);
-                                std::string dec_str = std::to_string(mountPtsDTO[i].dec);
-
-                                ImGui::TableSetColumnIndex(0);
-                                ImGui::Text(row_n_str.c_str());
-                                ImGui::TableSetColumnIndex(1);
-                                ImGui::Text(ra_str.c_str());
-                                ImGui::TableSetColumnIndex(2);
-                                ImGui::Text(dec_str.c_str());
-
-                            }
-                            static const char* spinner[4] = { " | ", " / ", "---", " \\ " };
-                            if (skySolverConnector.isMountPointPending()) {
-                                rows_drawn++;
-                                ImGui::TableNextRow();
-
-                                std::string row_n_str = std::to_string(rows_drawn);
-                                ImGui::TableSetColumnIndex(0);
-                                ImGui::Text(row_n_str.c_str());
-                                ImGui::TableSetColumnIndex(1);
-                                ImGui::Text(spinner[size_t(ImGui::GetTime() * 4) & 3]);
-                                ImGui::TableSetColumnIndex(2);
-                                ImGui::Text(spinner[size_t(ImGui::GetTime() * 4) & 3]);
-                            }
-                            for (size_t i = rows_drawn; i < RA_DEC_TABLE_MAX_SIZE; i++) {
-                                ImGui::TableNextRow();
-                                ImGui::TableSetColumnIndex(0);
-                                ImGui::Text(" ");
-                                ImGui::TableSetColumnIndex(1);
-                                ImGui::Text(" ");
-                                ImGui::TableSetColumnIndex(2);
-                                ImGui::Text(" ");
-                            }
-
-                            ImGui::EndTable();
-                        }
-                    }
-                    ImGui::TableSetColumnIndex(1);  // gridTable
-                    {
-                        char buffer[64];
-                        snprintf(buffer, sizeof(buffer), "%s##btnClearPoints", LC_LEFT_BTN_CLEAR_MOUNT_POINTS);
-                        if (ImGui::Button(buffer)) {
-                            skySolverConnector.clearMountPoints();
-                        }
-                    }
-                    ImGui::EndTable();  // gridTable
-                }
+                ImGui::EndTable();  // gridTable
             }
         }
-        ImGui::EndDisabled();  // # !skySolverConnector.isConnected() || NULL == rgbBuffer[1 - rgbWritePage]
+        ImGui::EndDisabled();  // # !solveManager.isServerConnected()
 
         ImGui::EndChild();
     }
@@ -512,7 +508,7 @@ void MainframeWindow::drawRightChild()
     if (ImGui::BeginChild("##viewport", ImVec2(0, ImGui::GetContentRegionAvail().y), flags)) {
 
         // Хаваем картинку и [выполняем debayer в отдельном потоке]
-        if (manager.grabImageData(imageHeader, imageBuffer)) {
+        if (cameraManager.grabImageData(imageHeader, imageBuffer)) {
             if (!imageHeader.isRaw) {
                 printf("[W] MainframeWindow::drawRightChild: not tested branch \"if (!imageHeader.isRaw) {\".\n");
                 std::unique_lock lock(imageMutex);
@@ -528,7 +524,7 @@ void MainframeWindow::drawRightChild()
                             std::shared_lock lock(imageMutex);
                             std::unique_lock lock2(rgbMutex[rgbWritePage]);
                             auto start = std::chrono::high_resolution_clock::now();
-                            manager.debayerRawImage(
+                            cameraManager.debayerRawImage(
                                 imageHeader,
                                 imageBuffer,
                                 rgbHeader[rgbWritePage],
@@ -548,7 +544,7 @@ void MainframeWindow::drawRightChild()
         {
             size_t page = 1 - rgbWritePage;
             std::shared_lock lock(rgbMutex[page]);
-            ToupTekCameraManager::FrameHeader h = rgbHeader[page];
+            Imaging::FrameHeader h = rgbHeader[page];
             if (h.width && h.height) {
                 glBindTexture(GL_TEXTURE_2D, displayGlTexture);
                 unsigned short internalFmt = rgbHeader[page].bpp <= 24 ? GL_RGB8 : GL_RGB16;
@@ -602,15 +598,5 @@ void MainframeWindow::invalidateRGBImage(
     if (rgbBuffer[page]) {
         free(rgbBuffer[page]);
         rgbBuffer[page] = NULL;
-    }
-}
-
-void MainframeWindow::resetRADecDTO()
-{
-    for (size_t i = 0; i < RA_DEC_TABLE_MAX_SIZE; i++)
-        memset(&RADecDTO[i], 0, sizeof(RADecDTO[i]));
-    if (skySolverConnector.isConnected()) {
-        skySolverConnector.stopSolve();
-        skySolverConnector.resetLastPlatesolveResult();
     }
 }

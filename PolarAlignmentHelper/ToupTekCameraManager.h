@@ -6,8 +6,10 @@
 #include <set>
 #include <map>
 #include <vector>
-#include "ThreadWorker.h"
+#include "CameraThreadWorker.h"
 #include <wingdi.h>
+
+#include "FrameHeader.h"
 
 class ToupTekCameraManager
 {
@@ -38,16 +40,7 @@ public:
         unsigned def;
     };
 
-    struct FrameHeader {
-        unsigned width;
-        unsigned height;
-        unsigned fourCC;
-        size_t buffer_size;
-        unsigned short bpp;
-        bool isRaw;
-    };
-
-    ToupTekCameraManager(ThreadWorker* worker);
+    ToupTekCameraManager();
     virtual ~ToupTekCameraManager();
 
     /// <summary>
@@ -212,12 +205,12 @@ public:
 
     void startDevicePulling(HWND hWnd);
     
-    bool grabImageData(FrameHeader& header, BYTE*& dst) const;
+    bool grabImageData(Imaging::FrameHeader& header, BYTE*& dst) const;
 
     static bool debayerRawImage(
-        _In_ FrameHeader& headerSrc,
+        _In_ Imaging::FrameHeader& headerSrc,
         _In_ BYTE*& dataSrc,
-        _Out_ FrameHeader& headerDst,
+        _Out_ Imaging::FrameHeader& headerDst,
         _Out_ BYTE*& dataDst);
 
 protected:
@@ -231,7 +224,7 @@ protected:
     HToupcam                   m_handle;
     bool                       m_isRunning;
 
-    ThreadWorker*              m_worker;
+    CameraThreadWorker m_worker;
 
     // Кэширование
     bool                            m_needRenewDevicesIdDTO;
@@ -249,7 +242,7 @@ protected:
     volatile size_t                m_pullingBitmapWritePage;
     alignas(std::hardware_destructive_interference_size)
         mutable std::shared_mutex  m_pullingBitmapMutex[2];
-    FrameHeader                    m_pullingBitmapInfo[2];
+    Imaging::FrameHeader           m_pullingBitmapInfo[2];
     BYTE*                          m_pullingBitmapData[2];
 
 

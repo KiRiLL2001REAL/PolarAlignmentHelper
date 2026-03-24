@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <filesystem>
 
 /// <summary>
 ///	    Утилитарный класс для всякого.
@@ -25,10 +26,11 @@ public:
     /// <param name="width"></param>
     /// <param name="height"></param>
     /// <param name="quality"></param>
-    /// <param name="filename"></param>
+    /// <param name="filename">Относительный путь к файлу.</param>
+    /// <param name="fullPath">OUT Полный путь к файлу.</param>
     /// <returns>
     ///     True - если операция записи завершилась успешно.
     ///     False - в ином случае.
     /// </returns>
-    static bool writeRGBJpeg(unsigned char* data, unsigned width, unsigned height, unsigned quality, const std::string& filename);
+    static bool writeRGBJpeg(unsigned char* data, unsigned width, unsigned height, unsigned quality, const std::filesystem::path& filename, std::filesystem::path& fullPath);
 };

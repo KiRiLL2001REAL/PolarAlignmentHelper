@@ -1,9 +1,9 @@
-#include "ThreadWorker.h"
+#include "CameraThreadWorker.h"
 
 #include <chrono>
 #include <cstdio>
 
-ThreadWorker::ThreadWorker() :
+CameraThreadWorker::CameraThreadWorker() :
     thr(),
     work(false),
     performingOperationWithDevice(false),
@@ -12,55 +12,53 @@ ThreadWorker::ThreadWorker() :
     callbackDeviceListUpdate(nullptr),
     callbackDeviceOpen      (nullptr)
 {
-    printf("[D] ThreadWorker::ctor\n");
 }
 
-ThreadWorker::~ThreadWorker()
+CameraThreadWorker::~CameraThreadWorker()
 {
-    printf("[D] ThreadWorker::dtor\n");
     stop();
 }
 
-void ThreadWorker::start()
+void CameraThreadWorker::start()
 {
     work = true;
-    thr = std::thread(&ThreadWorker::loop, this);
+    thr = std::thread(&CameraThreadWorker::loop, this);
 }
 
-bool ThreadWorker::deviceInUse() const
+bool CameraThreadWorker::deviceInUse() const
 {
     return performingOperationWithDevice;
 }
 
-void ThreadWorker::stop()
+void CameraThreadWorker::stop()
 {
     work = false;
     if (thr.joinable())
         thr.join();
 }
 
-void ThreadWorker::addTask(TASK_ID task, TASK_META taskMeta)
+void CameraThreadWorker::addTask(TASK_ID task, TASK_META taskMeta)
 {
     std::scoped_lock<std::mutex> lock(taskQueueMutex);
     taskQueue.emplace(task, taskMeta);
 }
 
-void ThreadWorker::setCallbackUpdateDeviceList(CallbackDeviceListUpdate callback)
+void CameraThreadWorker::setCallbackUpdateDeviceList(CallbackDeviceListUpdate callback)
 {
     callbackDeviceListUpdate = callback;
 }
 
-void ThreadWorker::setCallbackDeviceOpen(CallbackDeviceOpen callback)
+void CameraThreadWorker::setCallbackDeviceOpen(CallbackDeviceOpen callback)
 {
     callbackDeviceOpen = callback;
 }
 
-void ThreadWorker::setCallbackPreviewResolutionSet(CallbackPreviewResolutionSet callback)
+void CameraThreadWorker::setCallbackPreviewResolutionSet(CallbackPreviewResolutionSet callback)
 {
     callbackPreviewResolutionSet = callback;
 }
 
-std::pair<ThreadWorker::TASK_ID, ThreadWorker::TASK_META> ThreadWorker::popTask()
+std::pair<CameraThreadWorker::TASK_ID, CameraThreadWorker::TASK_META> CameraThreadWorker::popTask()
 {
     std::scoped_lock<std::mutex> lock(taskQueueMutex);
     if (taskQueue.empty()) {
@@ -73,16 +71,16 @@ std::pair<ThreadWorker::TASK_ID, ThreadWorker::TASK_META> ThreadWorker::popTask(
     return std::make_pair(taskId, taskMeta);
 }
 
-void ThreadWorker::dropTasks()
+void CameraThreadWorker::dropTasks()
 {
     std::scoped_lock<std::mutex> lock(taskQueueMutex);
     std::queue<std::pair<TASK_ID, TASK_META>> empty;
     std::swap(taskQueue, empty);
 }
 
-void ThreadWorker::loop()
+void CameraThreadWorker::loop()
 {
-    printf("[D] ThreadWorker::loop: START.\n");
+    printf("[D] CameraThreadWorker::loop: START.\n");
     while (work) {
         if (taskQueue.empty()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(25));
@@ -95,17 +93,17 @@ void ThreadWorker::loop()
         switch (taskId)
         {
         case TASK_ID::updateDeviceList: {
-            printf("[D] ThreadWorker::loop: {updateDeviceList}.\n");
+            printf("[D] CameraThreadWorker::loop: {updateDeviceList}.\n");
             ToupcamDeviceV2* devices = (ToupcamDeviceV2*)malloc(sizeof(ToupcamDeviceV2) * TOUPCAM_MAX);
             if (NULL == devices)
-                printf("[X] ThreadWorker::loop: {updateDeviceList} cannot allocate %lldbytes.\n", sizeof(ToupcamDeviceV2) * TOUPCAM_MAX);
+                printf("[X] CameraThreadWorker::loop: {updateDeviceList} cannot allocate %lldbytes.\n", sizeof(ToupcamDeviceV2) * TOUPCAM_MAX);
             else {
                 int count = Toupcam_EnumV2(devices);
                 if (work) {
                     if (callbackDeviceListUpdate)
                         callbackDeviceListUpdate(count, devices);
                     else
-                        printf("[E] ThreadWorker::loop: {updateDeviceList} callbackUpdateDeviceList isn't set.\n");
+                        printf("[E] CameraThreadWorker::loop: {updateDeviceList} callbackUpdateDeviceList isn't set.\n");
                 }
                 free(devices);
                 devices = NULL;
@@ -113,7 +111,7 @@ void ThreadWorker::loop()
             break;
         }
         case TASK_ID::openDevice: {
-            printf("[D] ThreadWorker::loop: {openDevice} ");
+            printf("[D] CameraThreadWorker::loop: {openDevice} ");
 #ifdef _WIN32
             wprintf(L"%ls", taskMeta.openDevice.id);
             thread_local std::wstring id;
@@ -131,7 +129,7 @@ void ThreadWorker::loop()
                 if (callbackDeviceOpen)
                     callbackDeviceOpen(handle, id);
                 else
-                    printf("[E] ThreadWorker::loop: {openDevice} cameraOpenCallback isn't set.\n");
+                    printf("[E] CameraThreadWorker::loop: {openDevice} cameraOpenCallback isn't set.\n");
             }
             break;
         }
@@ -142,27 +140,27 @@ void ThreadWorker::loop()
 
             std::unique_lock lock(handleMutex);
             if (!handle)
-                printf("[W] ThreadWorker::loop: {setPreviewResolution} Handle isn't opened.\n");
+                printf("[W] CameraThreadWorker::loop: {setPreviewResolution} Handle isn't opened.\n");
             else {
                 unsigned eSize;
                 HRESULT hr = Toupcam_get_eSize(handle, &eSize);
                 if (FAILED(hr))
-                    printf("[E] ThreadWorker::loop: {setPreviewResolution} Toupcam_get_eSize failed (code: %ld).\n", hr);
+                    printf("[E] CameraThreadWorker::loop: {setPreviewResolution} Toupcam_get_eSize failed (code: %ld).\n", hr);
                 else {
                     if (eSize == eSizeTarget)
-                        printf("[D] ThreadWorker::loop: {setPreviewResolution} Already satisfied.\n");
+                        printf("[D] CameraThreadWorker::loop: {setPreviewResolution} Already satisfied.\n");
                     else {
                         hr = Toupcam_Stop(handle);
-                        printf("[D] ThreadWorker::loop: {setPreviewResolution} Camera stopped.\n");
+                        printf("[D] CameraThreadWorker::loop: {setPreviewResolution} Camera stopped.\n");
                         if (FAILED(hr))
-                            printf("[E] ThreadWorker::loop: {setPreviewResolution} Toupcam_Stop failed (code: %ld).\n", hr);
+                            printf("[E] CameraThreadWorker::loop: {setPreviewResolution} Toupcam_Stop failed (code: %ld).\n", hr);
                         else {
                             Toupcam_put_eSize(handle, eSizeTarget);
-                            printf("[D] ThreadWorker::loop: {setPreviewResolution} ok (%u).\n", eSizeTarget);
+                            printf("[D] CameraThreadWorker::loop: {setPreviewResolution} ok (%u).\n", eSizeTarget);
                             if (callbackPreviewResolutionSet)
                                 callbackPreviewResolutionSet();
                             else
-                                printf("[E] ThreadWorker::loop: {setPreviewResolution} previewResolutionSetCallback isn't set.\n");
+                                printf("[E] CameraThreadWorker::loop: {setPreviewResolution} previewResolutionSetCallback isn't set.\n");
                         }
                     }
                 }
@@ -176,5 +174,5 @@ void ThreadWorker::loop()
         }
         performingOperationWithDevice = false;
     }
-    printf("[D] ThreadWorker::loop: END.\n");
+    printf("[D] CameraThreadWorker::loop: END.\n");
 }

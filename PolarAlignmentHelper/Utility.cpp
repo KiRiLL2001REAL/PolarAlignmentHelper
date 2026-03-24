@@ -33,13 +33,14 @@ bool Utility::writeRGBJpeg(
     unsigned width,
     unsigned height,
     unsigned quality,
-    const std::string& filename
+    const std::filesystem::path& filename,
+    std::filesystem::path& fullPath
 ) {
     std::scoped_lock lock(__writeRGBJpegMutex);
 
     namespace fs = std::filesystem;
 
-    fs::path p_filename = fs::weakly_canonical(fs::path(filename));
+    fs::path p_filename = fs::weakly_canonical(filename);
     fs::path fname = fs::path(p_filename).filename();
     fs::path fdir = fs::path(p_filename).remove_filename();
 
@@ -56,7 +57,8 @@ bool Utility::writeRGBJpeg(
         __writeRGBJpeg_ofstream = new std::ofstream(filename, std::ios_base::out | std::ios_base::binary);
 
     if (!__writeRGBJpeg_ofstream->is_open()) {
-        printf("[E] Utility::writeRGBJpeg: Can't write a file \"%s\"\n", filename.c_str());
+        std::string s = filename.string();
+        printf("[E] Utility::writeRGBJpeg: Can't write a file \"%s\"\n", s.c_str());
         return false;
     }
 
@@ -65,6 +67,8 @@ bool Utility::writeRGBJpeg(
     __writeRGBJpeg_ofstream->close();
     delete __writeRGBJpeg_ofstream;
     __writeRGBJpeg_ofstream = NULL;
+
+    fullPath = p_filename;
 
     return ok;
 }

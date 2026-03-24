@@ -7,7 +7,7 @@
 #include <functional>
 #include <shared_mutex>
 
-class ThreadWorker
+class CameraThreadWorker
 {
 public:
     enum class TASK_ID {
@@ -45,8 +45,8 @@ public:
 #endif
     using CallbackPreviewResolutionSet = std::function<void()>;
 
-    ThreadWorker();
-    virtual ~ThreadWorker();
+    CameraThreadWorker();
+    virtual ~CameraThreadWorker();
 
     void start();
     bool deviceInUse() const;

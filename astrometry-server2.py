@@ -21,6 +21,7 @@ TIMEOUT = 'timeout'
 
 solve_state = {
     'process': None,
+    'image_path' : None,
     'thread': None,
     'status': IDLE,  # idle, initializing, running, completed, failed, cancelled, timeout
     'output': None,
@@ -73,7 +74,7 @@ def parse_solve_output(output_text):
     return result if result else None
 
 
-def run_solve_field(image_path, timeout_sec=None):
+def run_solve_field(timeout_sec=None):
     """
     Запускает solve-field в отдельном процессе.
     Выполняется в фоне, обновляет глобальное состояние.
@@ -81,6 +82,9 @@ def run_solve_field(image_path, timeout_sec=None):
     global solve_state
     
     print(f"[INFO] Plate-Solving START")
+
+    with state_lock:
+        image_path = solve_state['image_path']
     
     cmd = [
         'solve-field',
@@ -90,6 +94,8 @@ def run_solve_field(image_path, timeout_sec=None):
         '--radius', '15',
         '--no-plots',
         '--downsample', '2',
+        '--new-fits', 'none',
+        '--temp-axy',
         '--overwrite'
     ]
     
@@ -116,7 +122,7 @@ def run_solve_field(image_path, timeout_sec=None):
             
         timeout_reached = False
         
-        # Чтение вывода построчно c проверкой тайм-аута
+        # Чтение вывода построчно с проверкой тайм-аута
         output_lines = []
         for line in iter(process.stdout.readline, ''):
             if line:
@@ -250,7 +256,10 @@ def handle_client(conn, addr):
                 break  # Клиент отключился
             
             message = data.decode('utf-8').strip()
-            print(f"[REQUEST] {addr}: {message}")
+            if 'STATUS' in message:
+                print(f"[REQUEST] {addr}: {message} (actual: '{solve_state['status']}')")
+            else:
+                print(f"[REQUEST] {addr}: {message}")
             
             response = ""
             
@@ -275,9 +284,10 @@ def handle_client(conn, addr):
                         solve_state['result'] = None
                         solve_state['error'] = None
                         solve_state['output'] = None
+                        solve_state['image_path'] = image_path
                         
                         # Запуск в отдельном потоке
-                        thread = threading.Thread(target=run_solve_field, args=(image_path,timeout_sec,))
+                        thread = threading.Thread(target=run_solve_field, args=(timeout_sec,))
                         thread.daemon = True
                         thread.start()
                         solve_state['thread'] = thread
@@ -312,21 +322,12 @@ def handle_client(conn, addr):
                 with state_lock:
                     status = solve_state['status']
                     if status == COMPLETED and solve_state['result']:
-                        response = format_result_response(solve_state['result'], COMPLETED)
+                        response = f"{format_result_response(solve_state['result'], COMPLETED)}|IMAGE_PATH:{solve_state['image_path']}"
                     elif solve_state['status'] == FAILED:
                         error = solve_state.get('error', 'Unknown error')
-                        response = f"RESULT:{FAILED}|ERROR:{error}"
+                        response = f"RESULT:{FAILED}|ERROR:{error}|IMAGE_PATH:{solve_state['image_path']}"
                     else:
                         response = "RESULT:NO_DATA"
-                    # Сброс состояния при COMPLETED и FAILED
-                    if status == COMPLETED and solve_state['result'] or solve_state['status'] == FAILED:
-                        solve_state['process'] = None
-                        solve_state['thread'] = None
-                        solve_state['status'] = IDLE
-                        solve_state['output'] = None
-                        solve_state['result'] = None
-                        solve_state['error'] = None
-                        solve_state['start_time'] = None
             
             # === Неизвестная команда ===
             else:

@@ -8,6 +8,8 @@
 
 // This is provided for completeness, however it is strongly recommended you use OpenGL with SDL or GLFW.
 
+#include <locale>
+
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -51,6 +53,9 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 // Main code
 int main(int, char**)
 {
+    std::setlocale(LC_ALL, "rus");
+    std::setlocale(LC_NUMERIC, "eng");
+
     // Make process DPI aware and obtain main monitor scale
     ImGui_ImplWin32_EnableDpiAwareness();
     float main_scale = ImGui_ImplWin32_GetDpiScaleForMonitor(::MonitorFromPoint(POINT{ 0, 0 }, MONITOR_DEFAULTTOPRIMARY));
@@ -123,7 +128,9 @@ int main(int, char**)
     bool done = false;
 
     g_pWindow = new MainframeWindow(hwnd);
-    g_pWindow->setSkySolverConnectionAddress("127.0.0.1", 65432);
+    g_pWindow->setSolverAddress("127.0.0.1", 65432);
+    g_pWindow->setSaveDirectory("temporaryDir");
+    g_pWindow->setSolvingTimeLimitSec(60);
 
     while (!done)
     {

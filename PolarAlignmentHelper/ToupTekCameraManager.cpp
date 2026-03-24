@@ -5,7 +5,7 @@
 
 #include "Debayer.h"
 
-ToupTekCameraManager::ToupTekCameraManager(ThreadWorker* worker) :
+ToupTekCameraManager::ToupTekCameraManager() :
     m_devicesCount(0),
     m_devicesMutex(),
 
@@ -15,7 +15,7 @@ ToupTekCameraManager::ToupTekCameraManager(ThreadWorker* worker) :
     m_handle(NULL),
     m_isRunning(false),
 
-    m_worker(worker),
+    m_worker(),
     
     m_needRenewDevicesIdDTO(true),          m_devicesIdDTO(),
     m_needRenewDeviceResolutionsDTO(false), m_deviceResolutionsDTO(),
@@ -31,6 +31,8 @@ ToupTekCameraManager::ToupTekCameraManager(ThreadWorker* worker) :
     }
     invalidatePullingBitmap(0);
     invalidatePullingBitmap(1);
+
+    m_worker.start();
 }
 
 ToupTekCameraManager::~ToupTekCameraManager()
@@ -45,6 +47,8 @@ ToupTekCameraManager::~ToupTekCameraManager()
     
     invalidatePullingBitmap(0);
     invalidatePullingBitmap(1);
+
+    m_worker.stop();
 }
 
 void ToupTekCameraManager::updateDeviceList()
@@ -52,17 +56,17 @@ void ToupTekCameraManager::updateDeviceList()
     static bool first_entry = true;
     if (first_entry) {
         first_entry = false;
-        m_worker->setCallbackUpdateDeviceList([this](int count, ToupcamDeviceV2* devices)
+        m_worker.setCallbackUpdateDeviceList([this](int count, ToupcamDeviceV2* devices)
             {
                 onUpdateDeviceList(count, devices);
             }
         );
     }
     
-    auto task_id = ThreadWorker::TASK_ID::updateDeviceList;
-    auto task_meta = ThreadWorker::TASK_META();
+    auto task_id = CameraThreadWorker::TASK_ID::updateDeviceList;
+    auto task_meta = CameraThreadWorker::TASK_META();
     printf("[D] ToupTekCameraManager::updateDeviceList: register event.\n");
-    m_worker->addTask(task_id, task_meta);
+    m_worker.addTask(task_id, task_meta);
 }
 
 const std::vector<ToupTekCameraManager::DeviceIdDTO>& ToupTekCameraManager::getDevicesIdDTO(
@@ -223,7 +227,7 @@ bool ToupTekCameraManager::openDevice(
     static bool firstEntry = true;
     if (firstEntry) {
         firstEntry = false;
-        m_worker->setCallbackDeviceOpen([this](HToupCam handle, std::wstring id)
+        m_worker.setCallbackDeviceOpen([this](HToupCam handle, std::wstring id)
             {
                 onDeviceOpen(handle, id);
             }
@@ -233,8 +237,8 @@ bool ToupTekCameraManager::openDevice(
     if (getDeviceHandle())
         return false;
 
-    auto taskId = ThreadWorker::TASK_ID::openDevice;
-    auto taskMeta = ThreadWorker::TASK_META();
+    auto taskId = CameraThreadWorker::TASK_ID::openDevice;
+    auto taskMeta = CameraThreadWorker::TASK_META();
     {  // taskMeta.openCamera.id = id
         size_t bytes = id.length() + 1;
 #ifdef _WIN32
@@ -247,7 +251,7 @@ bool ToupTekCameraManager::openDevice(
 
     m_pendingHandles++;
     printf("[D] ToupTekCameraManager::openDevice: register event.\n");
-    m_worker->addTask(taskId, taskMeta);
+    m_worker.addTask(taskId, taskMeta);
     return true;
 }
 
@@ -264,20 +268,18 @@ HToupcam ToupTekCameraManager::getDeviceHandle()
 
 void ToupTekCameraManager::closeDevice()
 {
-    while (m_worker->deviceInUse()) {
-        std::this_thread::yield();
-    }
-    if (getDeviceHandle()) {
-        std::unique_lock lock(m_handleMutex);
+    while (m_worker.deviceInUse()) std::this_thread::yield();
 
-        printf("[D] ToupTekCameraManager::closeDevice\n");
-        Toupcam_Close(m_handle);
-        m_isRunning = false;
-        m_handle = NULL;
-        m_openedDeviceIdx = TOUPCAM_MAX;
-        m_needRenewDeviceResolutionsDTO = true;
-        m_needRenewPixelFormatsDTO = true;
-    }
+    std::unique_lock lock(m_handleMutex);
+
+    printf("[D] ToupTekCameraManager::closeDevice\n");
+    Toupcam_Stop(m_handle);
+    Toupcam_Close(m_handle);
+    m_isRunning = false;
+    m_handle = NULL;
+    m_openedDeviceIdx = TOUPCAM_MAX;
+    m_needRenewDeviceResolutionsDTO = true;
+    m_needRenewPixelFormatsDTO = true;
 }
 
 const std::vector<ToupcamResolution>& ToupTekCameraManager::getPreviewResolutionsDTO(
@@ -312,7 +314,7 @@ bool ToupTekCameraManager::setCameraPreviewResolution(
     static bool firstEntry = true;
     if (firstEntry) {
         firstEntry = false;
-        m_worker->setCallbackPreviewResolutionSet([this]()
+        m_worker.setCallbackPreviewResolutionSet([this]()
             {
                 m_isRunning = false;
             }
@@ -322,14 +324,14 @@ bool ToupTekCameraManager::setCameraPreviewResolution(
     if (!getDeviceHandle())
         return false;
 
-    auto taskId = ThreadWorker::TASK_ID::setPreviewResolution;
-    auto taskMeta = ThreadWorker::TASK_META();
+    auto taskId = CameraThreadWorker::TASK_ID::setPreviewResolution;
+    auto taskMeta = CameraThreadWorker::TASK_META();
     taskMeta.setPreviewResolution.p_handleMutex = &m_handleMutex;
     taskMeta.setPreviewResolution.p_handle = &m_handle;
     taskMeta.setPreviewResolution.eSizeTarget = (unsigned)eSizeTarget;
 
     printf("[D] ToupTekCameraManager::setCameraPreviewResolution: register event.\n");
-    m_worker->addTask(taskId, taskMeta);
+    m_worker.addTask(taskId, taskMeta);
 
     return true;
 
@@ -544,7 +546,7 @@ LRESULT __stdcall ToupTekCameraManager::WndProcHandler(
                     }
                 }
                 
-                FrameHeader& header = m_pullingBitmapInfo[m_pullingBitmapWritePage];
+                Imaging::FrameHeader& header = m_pullingBitmapInfo[m_pullingBitmapWritePage];
                 BYTE*& data = m_pullingBitmapData[m_pullingBitmapWritePage];
                 if (header.isRaw != isRaw || header.bpp != bpp || header.width != width || header.height != height) {
                     if (data) {
@@ -634,12 +636,11 @@ void ToupTekCameraManager::startDevicePulling(
         closeDevice();
         return;
     }
-    printf("[D] ToupTekCameraManager::startDevicePulling: start.\n");
 
     m_isRunning = true;
 }
 
-bool ToupTekCameraManager::grabImageData(FrameHeader& header, BYTE*& dst) const
+bool ToupTekCameraManager::grabImageData(Imaging::FrameHeader& header, BYTE*& dst) const
 {
     std::shared_lock lock(m_pullingBitmapMutex[1 - m_pullingBitmapWritePage]);
     static size_t prev_page = 1000;
@@ -666,9 +667,9 @@ bool ToupTekCameraManager::grabImageData(FrameHeader& header, BYTE*& dst) const
 }
 
 bool ToupTekCameraManager::debayerRawImage(
-    _In_ FrameHeader& headerSrc,
+    _In_ Imaging::FrameHeader& headerSrc,
     _In_ BYTE*& dataSrc,
-    _Out_ FrameHeader& headerDst,
+    _Out_ Imaging::FrameHeader& headerDst,
     _Out_ BYTE*& dataDst
 ) {
     if (!headerSrc.isRaw)

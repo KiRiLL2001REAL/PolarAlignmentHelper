@@ -4,11 +4,12 @@
 #include <string>
 #include <vector>
 #include "ToupTekCameraManager.h"
-#include "ThreadWorker.h"
+#include "FrameHeader.h"
 #include <gl/GL.h>
 
-#include "SkySolverConnector.h"
 #include <chrono>
+#include "SolveManager.h"
+#include <filesystem>
 
 
 class MainframeWindow
@@ -18,7 +19,9 @@ public:
     virtual ~MainframeWindow();
 
     void draw(const std::string& title);
-    void setSkySolverConnectionAddress(const std::string& ip, int port);
+    void setSolverAddress(const std::string& ip, int port);
+    void setSaveDirectory(const std::filesystem::path& saveDirectory);
+    void setSolvingTimeLimitSec(size_t timeLimitSec);
 
     LRESULT WINAPI WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
@@ -28,8 +31,7 @@ protected:
 
     HWND hWnd;
 
-    ThreadWorker         worker;
-    ToupTekCameraManager manager;
+    ToupTekCameraManager cameraManager;
     
     std::vector<ToupTekCameraManager::DeviceIdDTO> devicesDTO;
     std::vector<ToupcamResolution> deviceResolutionsDTO;
@@ -39,31 +41,24 @@ protected:
     ToupTekCameraManager::RangeDTO exposureGainRangeDTO;
 
     GLuint displayGlTexture;
-    volatile bool                     imageProcessing;
-    mutable std::shared_mutex         imageMutex;
-    ToupTekCameraManager::FrameHeader imageHeader;
-    BYTE*                             imageBuffer;
-    size_t                            rgbWritePage;
-    mutable std::shared_mutex         rgbMutex[2];
-    ToupTekCameraManager::FrameHeader rgbHeader[2];
-    BYTE*                             rgbBuffer[2];
+    volatile bool              imageProcessing;
+    mutable std::shared_mutex  imageMutex;
+    Imaging::FrameHeader       imageHeader;
+    BYTE*                      imageBuffer;
+    size_t                     rgbWritePage;
+    mutable std::shared_mutex  rgbMutex[2];
+    Imaging::FrameHeader       rgbHeader[2];
+    BYTE*                      rgbBuffer[2];
 
-    static constexpr size_t     SERVER_CHECKOUT_INTERVAL_MS = 2500;
-    SkySolverConnector          skySolverConnector;
+    SolveManager  solveManager;
 
-    struct RA_DEC_DTO {
-        double RA;
-        double DEC;
-        bool active;
-        bool processing;
-    };
-    static constexpr short RA_DEC_TABLE_MAX_SIZE = 6;
-    std::vector<RA_DEC_DTO> RADecDTO;
+    const size_t MOUNT_POINTS_MIN_DISPLAYED_ITEMS = 4;
+    std::vector<SolveManager::CelestialPlateDTO> mountPlatesDTO;
+
 
     void drawLeftChild();
     void drawRightChild();
 
     void invalidateRGBImage(size_t page);
-    void resetRADecDTO();
 };
 

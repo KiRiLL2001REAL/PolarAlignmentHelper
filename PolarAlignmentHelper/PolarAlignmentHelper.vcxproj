@@ -100,7 +100,8 @@
     <ClCompile Include="main.cpp" />
     <ClCompile Include="MainframeWindow.cpp" />
     <ClCompile Include="SkySolverConnector.cpp" />
-    <ClCompile Include="ThreadWorker.cpp" />
+    <ClCompile Include="SolveManager.cpp" />
+    <ClCompile Include="CameraThreadWorker.cpp" />
     <ClCompile Include="ToupTekCameraManager.cpp" />
     <ClCompile Include="Utility.cpp" />
   </ItemGroup>
@@ -117,10 +118,12 @@
     <ClInclude Include="3rdparty\toojpeg\toojpeg.h" />
     <ClInclude Include="3rdparty\ToupCamSDK\inc\toupcam.h" />
     <ClInclude Include="Debayer.h" />
+    <ClInclude Include="FrameHeader.h" />
     <ClInclude Include="ImGuiCustom.h" />
     <ClInclude Include="MainframeWindow.h" />
     <ClInclude Include="SkySolverConnector.h" />
-    <ClInclude Include="ThreadWorker.h" />
+    <ClInclude Include="SolveManager.h" />
+    <ClInclude Include="CameraThreadWorker.h" />
     <ClInclude Include="ToupTekCameraManager.h" />
     <ClInclude Include="Utility.h" />
   </ItemGroup>
